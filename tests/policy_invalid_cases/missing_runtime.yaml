@@ -1,0 +1,13 @@
+apiVersion: policy.safe-run.dev/v1alpha1
+metadata:
+  name: demo-job
+resources:
+  cpu:
+    max: "100000 100000"
+  memory:
+    max: 256Mi
+network:
+  mode: none
+mounts: []
+audit:
+  level: basic

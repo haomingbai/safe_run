@@ -1,0 +1,12 @@
+[package]
+name = "sr-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+sr-compiler = { path = "../sr-compiler" }
+
+[dev-dependencies]
+serde_json.workspace = true
