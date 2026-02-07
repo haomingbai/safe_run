@@ -14,3 +14,5 @@ serde_json.workspace = true
 sr-common = { path = "../sr-common" }
 sr-policy = { path = "../sr-policy" }
 sr-compiler = { path = "../sr-compiler" }
+sr-evidence = { path = "../sr-evidence" }
+sr-runner = { path = "../sr-runner" }

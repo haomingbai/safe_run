@@ -49,15 +49,35 @@ if ! command -v mkfs.ext4 >/dev/null 2>&1; then
   exit 1
 fi
 
+ROOT_CMD=()
+if command -v fakeroot >/dev/null 2>&1; then
+  ROOT_CMD=(fakeroot --)
+elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+  ROOT_CMD=()
+elif command -v sudo >/dev/null 2>&1; then
+  ROOT_CMD=(sudo)
+else
+  echo "ERROR: fakeroot or sudo is required to set root ownership in rootfs." >&2
+  exit 1
+fi
+
+run_root_cmd() {
+  if ((${#ROOT_CMD[@]})); then
+    "${ROOT_CMD[@]}" "$@"
+  else
+    "$@"
+  fi
+}
+
 echo "Downloading rootfs: ${ROOTFS_URL}"
 wget -q -O "${ROOTFS_SQUASHFS}" "${ROOTFS_URL}"
 
 rm -rf squashfs-root
 unsquashfs "${ROOTFS_SQUASHFS}"
 
-sudo chown -R root:root squashfs-root
+run_root_cmd chown -R root:root squashfs-root
 truncate -s 1G rootfs.ext4
-sudo mkfs.ext4 -d squashfs-root -F rootfs.ext4
+run_root_cmd mkfs.ext4 -d squashfs-root -F rootfs.ext4
 
 echo "Artifacts ready in ${ARTIFACTS_DIR}:"
 ls -1 vmlinux rootfs.ext4

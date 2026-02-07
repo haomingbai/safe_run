@@ -94,12 +94,12 @@
 
 ### Context 6：`sr-cli` 新增 `run` 子命令
 
-- [ ] M1-CTX6-001 在 CLI 新增 `safe-run run --policy <file>`。
-- [ ] M1-CTX6-002 `run` 命令复用 `validate -> compile -> runner -> evidence` 链路。
-- [ ] M1-CTX6-003 `run` 成功返回 `runId`、`state`、`report` 路径。
-- [ ] M1-CTX6-004 `run` 失败统一输出标准错误结构与错误码。
-- [ ] M1-CTX6-005 保持 `validate`、`compile --dry-run` 既有行为不变。
-- [ ] M1-CTX6-006 补充 CLI 命令分支与参数校验测试。
+- [x] M1-CTX6-001 在 CLI 新增 `safe-run run --policy <file>`。
+- [x] M1-CTX6-002 `run` 命令复用 `validate -> compile -> runner -> evidence` 链路。
+- [x] M1-CTX6-003 `run` 成功返回 `runId`、`state`、`report` 路径。
+- [x] M1-CTX6-004 `run` 失败统一输出标准错误结构与错误码。
+- [x] M1-CTX6-005 保持 `validate`、`compile --dry-run` 既有行为不变。
+- [x] M1-CTX6-006 补充 CLI 命令分支与参数校验测试。
 
 ### Context 7：集成测试与示例
 
