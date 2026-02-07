@@ -150,3 +150,59 @@
 - [x] M1-DOD-003 失败路径有事件留痕且返回标准错误码。
 - [x] M1-DOD-004 事件链与 artifacts hash 可重算并通过测试。
 - [x] M1-DOD-005 所有实现和文档均可追溯到 `plan/` 设计文件。
+
+## 7. M1 验收补齐修复计划（新增）
+
+> 要求：运行问题先写测试暴露，再修复；文档问题直接修复。
+
+### 7.1 运行问题：工作目录内核/根文件系统不可达
+
+- [x] M1-FIX9-001 先新增失败复现测试：在 `sr-runner` 真实/模拟运行中强制使用运行工作目录，验证 `firecrackerConfig` 相对路径在 workdir 下不可达会失败（应覆盖 `SR-RUN-002` 或 `SR-EVD-002` 的明确错误路径）。
+- [x] M1-FIX9-002 修复：在 `prepare` 阶段将 `kernel_image_path` 与 `rootfs` 解析为可用路径（如复制到 workdir 或改写为绝对路径），并更新相关单元测试与快照测试。
+
+### 7.2 一致性问题：`compile` 事件缺失
+
+- [x] M1-FIX9-003 先新增测试：编译 + 运行链路输出的事件流必须包含 `compile` 事件（对齐 `evidencePlan.events`）。
+- [x] M1-FIX9-004 修复：在编译或运行链路中补写 `compile` 事件，并确保 hash 链可重算。
+
+### 7.3 文档/文案问题（直接修复）
+
+- [x] M1-FIX9-005 直接修复 CLI 文案：`safe-run` 的 `about` 从 M0 更新为 M1。
+
+## 8. M1 验收遗留问题修复计划（新增）
+
+> 问题：cleanup 先删 `firecracker-config.json`，导致报告阶段读取失败。
+
+### 8.1 先用测试复现
+
+- [x] M1-FIX10-001 新增 CLI 回归测试：执行 `prepare -> cleanup -> build_report` 路径，断言报告可生成（当前应失败）。
+- [x] M1-FIX10-002 为上述测试补齐最小 fake 产物（kernel/rootfs/config/events）与临时工作目录清理。
+
+### 8.2 方案确定与实现
+
+- [x] M1-FIX10-003 方案评估：在 `cleanup` 前生成报告，或在 `cleanup` 中保留 `firecracker-config.json`，或在 `prepare` 中将关键字段缓存到报告输入。
+- [x] M1-FIX10-004 选定方案并实现（需保持 M1 语义与接口不变，避免引入 M2/M3 能力）。
+
+### 8.3 兼容性与回归验证
+
+- [x] M1-FIX10-005 更新/新增单元测试与集成测试，确保 `run_report.json` 始终可生成。
+- [x] M1-FIX10-006 校验 `integrity.digest`、`policyHash`、`commandHash` 仍可复算。
+- [x] M1-FIX10-007 更新 `M1_CHECKLIST.md` 验收记录（包含修复后验证结果）。
+
+## 9. M1 验收错误码回归修复计划（新增）
+
+> 问题：异常退出（非零 exit code）未返回标准 `SR-RUN-*` 错误码。
+
+### 9.1 复现与定位
+
+- [x] M1-FIX11-001 复现并确认问题：`monitor` 非零退出仅置 `RunState::Failed`，`run` 命令仍返回成功码。
+
+### 9.2 修复实现
+
+- [x] M1-FIX11-002 在 `sr-runner monitor` 非零退出路径补写 `run.failed` 事件，并附 `errorCode=SR-RUN-001`。
+- [x] M1-FIX11-003 在 `sr-cli run` 生成报告后根据失败状态返回 `SR-RUN-001`，不再返回成功退出码。
+
+### 9.3 验证与归档
+
+- [x] M1-FIX11-004 补充并通过测试：异常退出事件留痕 + CLI 错误码映射。
+- [x] M1-FIX11-005 更新 `M1_CHECKLIST.md` 验收记录。

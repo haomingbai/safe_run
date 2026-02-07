@@ -36,6 +36,7 @@ fn minimal_run_executes_and_writes_report() {
     assert!(monitor_result.sample_count > 0);
 
     let events = parse_event_stream(&prepared.event_log_path());
+    assert!(events.iter().any(|event| event.event_type == "compile"));
     assert!(events
         .iter()
         .any(|event| event.event_type == "run.prepared"));

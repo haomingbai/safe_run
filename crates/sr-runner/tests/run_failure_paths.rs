@@ -4,8 +4,10 @@ use common::{
     compile_bundle_from_policy, new_temp_dir, override_launch_command, parse_event_stream,
     remove_temp_dir, runtime_context, write_mock_cgroup_files, write_mock_vm_artifacts,
 };
-use sr_common::{SR_RUN_002, SR_RUN_003};
+use serde_json::json;
+use sr_common::{SR_RUN_001, SR_RUN_002, SR_RUN_003};
 use sr_runner::{RunState, Runner, RunnerControlRequest, RunnerRuntime};
+use std::fs;
 
 #[test]
 fn launch_failure_returns_sr_run_002() {
@@ -32,6 +34,99 @@ fn launch_failure_returns_sr_run_002() {
     assert_eq!(prepared.state, RunState::Failed);
     assert!(events.iter().any(|event| event.event_type == "run.failed"));
     remove_temp_dir(&workdir);
+}
+
+#[test]
+fn prepare_rejects_missing_artifacts() {
+    let workdir = new_temp_dir("run-failure-missing-artifacts");
+    let runner = Runner::with_runtime(RunnerRuntime {
+        jailer_bin: "/bin/true".to_string(),
+        firecracker_bin: "/bin/true".to_string(),
+    });
+    let (_, mut compile_bundle) = compile_bundle_from_policy();
+    compile_bundle.firecracker_config = json!({
+        "machine-config": {
+            "vcpu_count": 1,
+            "mem_size_mib": 256,
+            "smt": false
+        },
+        "boot-source": {
+            "kernel_image_path": "missing/vmlinux",
+            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+        },
+        "rootfs": {
+            "path": "missing/rootfs.ext4",
+            "readOnly": true
+        },
+        "drives": []
+    });
+    let request = RunnerControlRequest {
+        compile_bundle,
+        runtime_context: runtime_context(&workdir, None, 3, 20),
+    };
+
+    let err = runner.prepare(request).expect_err("prepare must fail");
+    assert_eq!(err.code, SR_RUN_002);
+    assert!(err.path.starts_with("prepare.artifacts."));
+    remove_temp_dir(&workdir);
+}
+
+#[test]
+fn prepare_copies_absolute_artifacts_into_workdir() {
+    let workdir = new_temp_dir("run-prepare-copy-artifacts");
+    let source_dir = new_temp_dir("run-prepare-source-artifacts");
+    let kernel_source = source_dir.join("kernel-src");
+    let rootfs_source = source_dir.join("rootfs-src.ext4");
+    fs::write(&kernel_source, b"kernel-image").expect("write kernel source");
+    fs::write(&rootfs_source, b"rootfs-image").expect("write rootfs source");
+
+    let runner = Runner::with_runtime(RunnerRuntime {
+        jailer_bin: "/bin/true".to_string(),
+        firecracker_bin: "/bin/true".to_string(),
+    });
+    let (_, mut compile_bundle) = compile_bundle_from_policy();
+    compile_bundle.firecracker_config = json!({
+        "machine-config": {
+            "vcpu_count": 1,
+            "mem_size_mib": 256,
+            "smt": false
+        },
+        "boot-source": {
+            "kernel_image_path": kernel_source.to_string_lossy(),
+            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+        },
+        "rootfs": {
+            "path": rootfs_source.to_string_lossy(),
+            "readOnly": true
+        },
+        "drives": []
+    });
+    let request = RunnerControlRequest {
+        compile_bundle,
+        runtime_context: runtime_context(&workdir, None, 3, 20),
+    };
+
+    let prepared = runner.prepare(request).expect("prepare should succeed");
+    let config_raw = fs::read_to_string(prepared.firecracker_config_path())
+        .expect("read firecracker config");
+    let config_json: serde_json::Value =
+        serde_json::from_str(&config_raw).expect("parse firecracker config");
+    let kernel_path = config_json
+        .pointer("/boot-source/kernel_image_path")
+        .and_then(|value| value.as_str())
+        .expect("kernel path exists");
+    let rootfs_path = config_json
+        .pointer("/rootfs/path")
+        .and_then(|value| value.as_str())
+        .expect("rootfs path exists");
+
+    assert!(kernel_path.starts_with("artifacts/"));
+    assert!(rootfs_path.starts_with("artifacts/"));
+    assert!(prepared.workdir().join(kernel_path).is_file());
+    assert!(prepared.workdir().join(rootfs_path).is_file());
+
+    remove_temp_dir(&workdir);
+    remove_temp_dir(&source_dir);
 }
 
 #[test]
@@ -123,5 +218,16 @@ fn abnormal_exit_is_recorded_with_non_zero_exit_code() {
     assert!(!monitor_result.timed_out);
     assert_eq!(prepared.state, RunState::Failed);
     assert!(events.iter().any(|event| event.event_type == "vm.exited"));
+    let failed_event = events
+        .iter()
+        .find(|event| event.event_type == "run.failed")
+        .expect("non-zero exit must emit run.failed");
+    assert_eq!(
+        failed_event
+            .payload
+            .get("errorCode")
+            .and_then(|value| value.as_str()),
+        Some(SR_RUN_001)
+    );
     remove_temp_dir(&workdir);
 }

@@ -6,12 +6,8 @@ use std::fs;
 use std::path::Path;
 
 /// Release temporary runner resources and emit `run.cleaned`.
-/// The cleanup keeps evidence artifacts while removing transient runtime files.
+/// The cleanup keeps evidence artifacts and report inputs while removing transient runtime files.
 pub(crate) fn cleanup_run(prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
-    remove_file_if_exists(
-        prepared.firecracker_config_path().as_path(),
-        "cleanup.firecrackerConfig",
-    )?;
     remove_file_if_exists(
         prepared.runtime_context_path().as_path(),
         "cleanup.runtimeContext",

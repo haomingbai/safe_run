@@ -56,6 +56,7 @@ mod tests {
             evidence_plan: EvidencePlan {
                 enabled: true,
                 events: vec![
+                    "compile".to_string(),
                     "run.prepared".to_string(),
                     "vm.started".to_string(),
                     "run.failed".to_string(),
@@ -103,6 +104,15 @@ mod tests {
             memory_current.to_string(),
         )
         .expect("write memory.current");
+    }
+
+    fn write_mock_vm_artifacts(workdir: &Path) {
+        let artifacts_dir = workdir.join("artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("create artifacts dir");
+        fs::write(artifacts_dir.join("vmlinux"), b"kernel-image")
+            .expect("write mock kernel");
+        fs::write(artifacts_dir.join("rootfs.ext4"), b"rootfs-image")
+            .expect("write mock rootfs");
     }
 
     fn override_launch_to_sleep(prepared: &mut PreparedRun, sleep_seconds: &str) {
@@ -158,6 +168,7 @@ mod tests {
     #[test]
     fn prepare_creates_workdir_and_runtime_context() {
         let run_dir = new_temp_run_dir("prepare");
+        write_mock_vm_artifacts(&run_dir);
         let runner = runner_for_tests();
         let prepared = runner
             .prepare(sample_request(&run_dir))
@@ -184,6 +195,7 @@ mod tests {
     #[test]
     fn launch_assembles_params_and_writes_required_events() {
         let run_dir = new_temp_run_dir("launch-success");
+        write_mock_vm_artifacts(&run_dir);
         let runner = runner_for_tests();
         let mut prepared = runner
             .prepare(sample_request(&run_dir))
@@ -240,12 +252,15 @@ mod tests {
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
         let lines: Vec<&str> = events_raw.lines().collect();
-        assert_eq!(lines.len(), 2);
+        assert_eq!(lines.len(), 3);
 
+        let compile_event: EvidenceEvent =
+            serde_json::from_str(lines[0]).expect("parse compile event");
         let prepared_event: EvidenceEvent =
-            serde_json::from_str(lines[0]).expect("parse run.prepared event");
+            serde_json::from_str(lines[1]).expect("parse run.prepared event");
         let started_event: EvidenceEvent =
-            serde_json::from_str(lines[1]).expect("parse vm.started event");
+            serde_json::from_str(lines[2]).expect("parse vm.started event");
+        assert_eq!(compile_event.event_type, "compile");
         assert_eq!(prepared_event.event_type, "run.prepared");
         assert_eq!(started_event.event_type, "vm.started");
         assert_eq!(started_event.stage, "launch");
@@ -256,6 +271,7 @@ mod tests {
     #[test]
     fn launch_failure_returns_run_002_and_invokes_cleanup() {
         let run_dir = new_temp_run_dir("launch-failure");
+        write_mock_vm_artifacts(&run_dir);
         let runner = Runner::with_runtime(RunnerRuntime {
             jailer_bin: "/definitely-not-found/safe-run-jailer".to_string(),
             firecracker_bin: "/bin/true".to_string(),
@@ -280,6 +296,7 @@ mod tests {
     #[test]
     fn launch_preflight_failure_on_missing_firecracker_returns_run_002() {
         let run_dir = new_temp_run_dir("launch-preflight-missing-firecracker");
+        write_mock_vm_artifacts(&run_dir);
         let runner = Runner::with_runtime(RunnerRuntime {
             jailer_bin: "/bin/true".to_string(),
             firecracker_bin: "/definitely-not-found/safe-run-firecracker".to_string(),
@@ -305,6 +322,7 @@ mod tests {
     #[test]
     fn monitor_collects_samples_and_records_vm_exit() {
         let run_dir = new_temp_run_dir("monitor-success");
+        write_mock_vm_artifacts(&run_dir);
         let cgroup_dir = run_dir.join("mock-cgroup");
         set_mock_cgroup(&cgroup_dir, 12345, 4096);
 
@@ -337,6 +355,7 @@ mod tests {
     #[test]
     fn monitor_timeout_returns_run_003_and_sets_failed_state() {
         let run_dir = new_temp_run_dir("monitor-timeout");
+        write_mock_vm_artifacts(&run_dir);
         let cgroup_dir = run_dir.join("mock-cgroup");
         set_mock_cgroup(&cgroup_dir, 200, 8192);
 
@@ -366,8 +385,9 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_removes_transient_files_and_writes_run_cleaned_event() {
+    fn cleanup_keeps_firecracker_config_and_writes_run_cleaned_event() {
         let run_dir = new_temp_run_dir("cleanup-success");
+        write_mock_vm_artifacts(&run_dir);
         let cgroup_dir = run_dir.join("mock-cgroup");
         set_mock_cgroup(&cgroup_dir, 300, 12288);
 
@@ -388,7 +408,7 @@ mod tests {
             .expect("cleanup should succeed");
 
         assert!(prepared.cleanup_marker_path().exists());
-        assert!(!prepared.firecracker_config_path().exists());
+        assert!(prepared.firecracker_config_path().exists());
         assert!(!prepared.runtime_context_path().exists());
         assert!(!prepared.vm_pid_path().exists());
 
@@ -403,6 +423,7 @@ mod tests {
     #[test]
     fn cleanup_failure_writes_run_failed_with_error_code() {
         let run_dir = new_temp_run_dir("cleanup-failure");
+        write_mock_vm_artifacts(&run_dir);
         let cgroup_dir = run_dir.join("mock-cgroup");
         set_mock_cgroup(&cgroup_dir, 400, 16384);
 
@@ -419,9 +440,9 @@ mod tests {
             .monitor(&mut prepared)
             .expect("monitor should succeed");
 
-        let firecracker_path = prepared.firecracker_config_path();
-        fs::remove_file(&firecracker_path).expect("remove firecracker config");
-        fs::create_dir(&firecracker_path).expect("create conflicting directory");
+        let runtime_context_path = prepared.runtime_context_path();
+        fs::remove_file(&runtime_context_path).expect("remove runtime context");
+        fs::create_dir(&runtime_context_path).expect("create conflicting directory");
 
         let err = runner
             .cleanup(&mut prepared)

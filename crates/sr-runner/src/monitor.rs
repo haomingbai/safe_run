@@ -147,6 +147,18 @@ fn finish_with_exit(
         sample_count,
     };
     write_vm_exited_event(prepared, &result)?;
+    if result.exit_code != 0 && !result.timed_out {
+        write_event(
+            prepared,
+            "monitor",
+            "run.failed",
+            json!({
+                "reason": "abnormal_exit",
+                "errorCode": SR_RUN_001,
+                "exitCode": result.exit_code
+            }),
+        )?;
+    }
     Ok(result)
 }
 

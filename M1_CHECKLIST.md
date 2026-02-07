@@ -61,3 +61,18 @@
 ## 8. 后续修复入口
 
 后续修复任务已在 `TODO.md` 新增 `Context 8 后续修复任务（真实执行阻塞）`。
+
+## 9. M1-FIX10 验收补齐记录（2026-02-07）
+
+- [x] 已复现并覆盖回归路径：`prepare -> cleanup -> build_report`（`sr-cli` 单测 `report_build_succeeds_after_cleanup`）。
+- [x] 已选定并实现修复方案：`cleanup` 保留 `firecracker-config.json`，仅清理临时运行文件（`runtime-context.json` / `vm.pid` / `api socket`）。
+- [x] 已验证报告链路：cleanup 后仍可生成 `run_report.json`，不影响 `I-RP-001` 字段语义。
+- [x] 已验证 hash 可复算：`integrity.digest`、`policyHash`、`commandHash` 相关测试通过。
+- [x] 本次验证命令：`cargo test -p sr-cli -p sr-runner -p sr-evidence`（全部通过）。
+
+## 10. M1-FIX11 异常退出错误码修复记录（2026-02-07）
+
+- [x] 已确认问题：非零退出路径原实现仅设置 `RunState::Failed`，CLI 未返回 `SR-RUN-*`。
+- [x] `sr-runner` 已在异常退出时写入 `run.failed` 事件并附 `errorCode=SR-RUN-001`。
+- [x] `sr-cli run` 已在报告生成后按失败状态返回 `SR-RUN-001` 标准错误结构。
+- [x] 验证命令：`cargo test -p sr-cli -p sr-runner`（全部通过）。

@@ -1,12 +1,14 @@
 use clap::{Parser, Subcommand};
-use sr_common::{ErrorItem, SR_CMP_002, SR_EVD_002};
+use sr_common::{ErrorItem, SR_CMP_002, SR_EVD_002, SR_RUN_001};
 use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
     build_report, compute_artifact_hashes_from_json, compute_integrity_digest, ArtifactJsonInputs,
     EvidenceEvent, PolicySummary, ResourceUsage, RunReport,
 };
 use sr_policy::{load_policy_from_path, validate_policy, NetworkMode, PolicySpec};
-use sr_runner::{MonitorResult, RunState, Runner, RunnerControlRequest, RuntimeContext};
+use sr_runner::{
+    MonitorResult, RunState, Runner, RunnerControlRequest, RunnerRuntime, RuntimeContext,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -14,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 #[command(name = "safe-run")]
-#[command(about = "Safe-Run M0 CLI")]
+#[command(about = "Safe-Run M1 CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -117,14 +119,11 @@ fn run_cmd(policy_path: &str) -> ExitCode {
         Err(err) => return exit_with_error(&err),
     };
     let report_path = prepared.artifacts_dir().join(&prepared.artifacts.report);
-    match build_and_write_report(
-        &prepared,
-        &normalized,
-        &compile_bundle,
-        &monitor_result,
-        &report_path,
-    ) {
+    match build_and_write_report(&prepared, &normalized, &monitor_result, &report_path) {
         Ok(report) => {
+            if let Some(err) = run_outcome_error(prepared.state, &monitor_result, &report_path) {
+                return exit_with_error(&err);
+            }
             print_json_value(&serde_json::json!({
                 "runId": report.run_id,
                 "state": state_label(prepared.state),
@@ -134,6 +133,25 @@ fn run_cmd(policy_path: &str) -> ExitCode {
         }
         Err(err) => exit_with_error(&err),
     }
+}
+
+fn run_outcome_error(
+    state: RunState,
+    monitor_result: &MonitorResult,
+    report_path: &Path,
+) -> Option<ErrorItem> {
+    if state == RunState::Failed || monitor_result.exit_code != 0 {
+        return Some(ErrorItem::new(
+            SR_RUN_001,
+            "run.exitCode",
+            format!(
+                "run exited abnormally with code {} (report: {})",
+                monitor_result.exit_code,
+                report_path.display()
+            ),
+        ));
+    }
+    None
 }
 
 fn load_and_validate_policy(policy_path: &str) -> Result<PolicySpec, ExitCode> {
@@ -217,13 +235,11 @@ fn derive_run_id() -> String {
 fn build_and_write_report(
     prepared: &sr_runner::PreparedRun,
     policy: &PolicySpec,
-    compile_bundle: &CompileBundle,
     monitor_result: &MonitorResult,
     report_path: &Path,
 ) -> Result<RunReport, ErrorItem> {
     let events = load_events(prepared.event_log_path().as_path())?;
-    let mut report =
-        build_report_from_events(prepared, policy, compile_bundle, monitor_result, &events)?;
+    let mut report = build_report_from_events(prepared, policy, monitor_result, &events)?;
     let digest = compute_integrity_digest(&report)?;
     report.integrity.digest = digest;
     write_report(report_path, &report)?;
@@ -233,7 +249,6 @@ fn build_and_write_report(
 fn build_report_from_events(
     prepared: &sr_runner::PreparedRun,
     policy: &PolicySpec,
-    compile_bundle: &CompileBundle,
     monitor_result: &MonitorResult,
     events: &[EvidenceEvent],
 ) -> Result<RunReport, ErrorItem> {
@@ -243,7 +258,7 @@ fn build_report_from_events(
         network: network_label(&policy.network.mode).to_string(),
         mounts: policy.mounts.len(),
     };
-    let artifacts = compute_report_artifacts(prepared.workdir(), policy, compile_bundle)?;
+    let artifacts = compute_report_artifacts(prepared, policy)?;
     Ok(build_report(
         prepared.run_id.clone(),
         started_at,
@@ -258,9 +273,8 @@ fn build_report_from_events(
 }
 
 fn compute_report_artifacts(
-    workdir: &Path,
+    prepared: &sr_runner::PreparedRun,
     policy: &PolicySpec,
-    compile_bundle: &CompileBundle,
 ) -> Result<sr_evidence::ReportArtifacts, ErrorItem> {
     let policy_json = serde_json::to_value(policy).map_err(|err| {
         ErrorItem::new(
@@ -273,13 +287,31 @@ fn compute_report_artifacts(
         "command": policy.runtime.command,
         "args": policy.runtime.args
     });
+    let firecracker_config = load_firecracker_config(prepared.firecracker_config_path())?;
     let (kernel_path, rootfs_path) =
-        resolve_artifact_paths(workdir, &compile_bundle.firecracker_config)?;
+        resolve_artifact_paths(prepared.workdir(), &firecracker_config)?;
     compute_artifact_hashes_from_json(ArtifactJsonInputs {
         kernel_path: kernel_path.as_path(),
         rootfs_path: rootfs_path.as_path(),
         policy_json: &policy_json,
         command_json: &command_json,
+    })
+}
+
+fn load_firecracker_config(path: PathBuf) -> Result<serde_json::Value, ErrorItem> {
+    let raw = fs::read_to_string(&path).map_err(|err| {
+        ErrorItem::new(
+            SR_EVD_002,
+            "report.firecrackerConfig",
+            format!("failed to read firecracker config '{}': {err}", path.display()),
+        )
+    })?;
+    serde_json::from_str(&raw).map_err(|err| {
+        ErrorItem::new(
+            SR_EVD_002,
+            "report.firecrackerConfig",
+            format!("failed to parse firecracker config '{}': {err}", path.display()),
+        )
     })
 }
 
@@ -479,6 +511,8 @@ fn print_error_result(err: &ErrorItem) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sr_compiler::compile_dry_run;
+    use sr_policy::{Audit, Cpu, Memory, Metadata, Network, NetworkMode, Resources, Runtime};
     use std::fs::File;
     use std::io::Write;
 
@@ -508,6 +542,129 @@ mod tests {
         assert_eq!(code, ExitCode::from(2));
 
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn report_build_succeeds_after_cleanup() {
+        let run_id = "sr-test-report-after-cleanup";
+        let workdir = temp_run_dir(run_id);
+        write_mock_vm_artifacts(&workdir);
+
+        let policy = sample_policy();
+        let compile_bundle = compile_dry_run(&policy).expect("compile should succeed");
+        let request = RunnerControlRequest {
+            compile_bundle,
+            runtime_context: RuntimeContext {
+                workdir: workdir.to_string_lossy().to_string(),
+                timeout_sec: 1,
+                sample_interval_ms: None,
+                cgroup_path: None,
+            },
+        };
+        let runner = Runner::with_runtime(RunnerRuntime {
+            jailer_bin: "/bin/true".to_string(),
+            firecracker_bin: "/bin/true".to_string(),
+        });
+
+        let mut prepared = runner.prepare(request).expect("prepare should succeed");
+        runner.cleanup(&mut prepared).expect("cleanup should succeed");
+
+        let report_path = prepared.artifacts_dir().join(&prepared.artifacts.report);
+        let monitor_result = MonitorResult {
+            exit_code: 0,
+            timed_out: false,
+            sample_count: 0,
+        };
+        let result = build_and_write_report(&prepared, &policy, &monitor_result, &report_path);
+        assert!(prepared.firecracker_config_path().exists());
+        assert!(prepared.event_log_path().exists());
+        let _ = fs::remove_dir_all(&workdir);
+        assert!(
+            result.is_ok(),
+            "report build should succeed after cleanup, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn run_outcome_error_returns_sr_run_001_for_failed_state() {
+        let monitor_result = MonitorResult {
+            exit_code: 17,
+            timed_out: false,
+            sample_count: 2,
+        };
+        let err = run_outcome_error(
+            RunState::Failed,
+            &monitor_result,
+            Path::new("/tmp/safe-run/report.json"),
+        )
+        .expect("failed state should map to SR-RUN-001");
+        assert_eq!(err.code, SR_RUN_001);
+        assert_eq!(err.path, "run.exitCode");
+        assert!(err.message.contains("17"));
+    }
+
+    #[test]
+    fn run_outcome_error_returns_none_for_finished_state() {
+        let monitor_result = MonitorResult {
+            exit_code: 0,
+            timed_out: false,
+            sample_count: 1,
+        };
+        let err = run_outcome_error(
+            RunState::Finished,
+            &monitor_result,
+            Path::new("/tmp/safe-run/report.json"),
+        );
+        assert!(err.is_none());
+    }
+
+    fn sample_policy() -> PolicySpec {
+        PolicySpec {
+            api_version: "policy.safe-run.dev/v1alpha1".to_string(),
+            metadata: Metadata {
+                name: "cli-report-test".to_string(),
+            },
+            runtime: Runtime {
+                command: "/bin/echo".to_string(),
+                args: vec!["ok".to_string()],
+            },
+            resources: Resources {
+                cpu: Cpu {
+                    max: "100000 100000".to_string(),
+                },
+                memory: Memory { max: "256Mi".to_string() },
+            },
+            network: Network {
+                mode: NetworkMode::None,
+            },
+            mounts: vec![],
+            audit: Audit {
+                level: "basic".to_string(),
+            },
+        }
+    }
+
+    fn temp_run_dir(run_id: &str) -> PathBuf {
+        let mut base = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        base.push(format!("safe-run-cli-{run_id}-{nanos}"));
+        let workdir = base.join(run_id);
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&workdir).expect("create workdir");
+        workdir
+    }
+
+    fn write_mock_vm_artifacts(workdir: &Path) {
+        let artifacts_dir = workdir.join("artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("create artifacts dir");
+        fs::write(artifacts_dir.join("vmlinux"), b"kernel-image")
+            .expect("write mock kernel");
+        fs::write(artifacts_dir.join("rootfs.ext4"), b"rootfs-image")
+            .expect("write mock rootfs");
     }
 
     fn temp_policy_path(label: &str) -> PathBuf {
