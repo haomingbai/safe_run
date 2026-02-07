@@ -46,33 +46,40 @@
 
 ### Context 2：`sr-compiler` M1 可执行输出扩展
 
-- [ ] M1-CTX2-001 保留 `CompileBundle` 字段名与结构不变（兼容 M0）。
-- [ ] M1-CTX2-002 将编译输出从“仅 dry-run 演示”扩展到“可供 runner 使用”的配置内容。
-- [ ] M1-CTX2-003 明确并固化 `networkPlan=null`（M1 禁止网络能力）。
-- [ ] M1-CTX2-004 扩展 `evidencePlan.events`，覆盖 M1 事件类型所需集合。
-- [ ] M1-CTX2-005 新增编译失败分支测试（字段缺失/非法映射）。
-- [ ] M1-CTX2-006 新增编译输出兼容性快照测试（仅 additive 变化）。
+- [x] M1-CTX2-001 保留 `CompileBundle` 字段名与结构不变（兼容 M0）。
+- [x] M1-CTX2-002 将编译输出从“仅 dry-run 演示”扩展到“可供 runner 使用”的配置内容。
+- [x] M1-CTX2-003 明确并固化 `networkPlan=null`（M1 禁止网络能力）。
+- [x] M1-CTX2-004 扩展 `evidencePlan.events`，覆盖 M1 事件类型所需集合。
+- [x] M1-CTX2-005 新增编译失败分支测试（字段缺失/非法映射）。
+- [x] M1-CTX2-006 新增编译输出兼容性快照测试（仅 additive 变化）。
 
 ### Context 3：`sr-runner` 的 `prepare/launch`
 
-- [ ] M1-CTX3-001 实现 `prepare`：创建 run 工作目录与产物目录。
-- [ ] M1-CTX3-002 实现 `prepare`：初始化运行上下文（含 `timeoutSec`）。
-- [ ] M1-CTX3-003 实现 `launch`：组装 jailer 与 Firecracker 启动参数。
-- [ ] M1-CTX3-004 实现 `launch`：启动前写入 `run.prepared` 事件。
-- [ ] M1-CTX3-005 实现 `launch`：成功启动后写入 `vm.started` 事件。
-- [ ] M1-CTX3-006 实现 `launch` 失败路径并映射 `SR-RUN-002`。
-- [ ] M1-CTX3-007 失败时触发统一清理入口（不可跳过 cleanup）。
+- [x] M1-CTX3-001 实现 `prepare`：创建 run 工作目录与产物目录。
+- [x] M1-CTX3-002 实现 `prepare`：初始化运行上下文（含 `timeoutSec`）。
+- [x] M1-CTX3-003 实现 `launch`：组装 jailer 与 Firecracker 启动参数。
+- [x] M1-CTX3-004 实现 `launch`：启动前写入 `run.prepared` 事件。
+- [x] M1-CTX3-005 实现 `launch`：成功启动后写入 `vm.started` 事件。
+- [x] M1-CTX3-006 实现 `launch` 失败路径并映射 `SR-RUN-002`。
+- [x] M1-CTX3-007 失败时触发统一清理入口（不可跳过 cleanup）。
+
+### Context 3.5：代码拆分与注释规范化
+
+- [x] M1-CTX3_5-001 按模块职责拆分 `sr-runner` 源码（`prepare/launch/event` 等），确保单文件职责单一。
+- [x] M1-CTX3_5-002 保证单文件不超过 1000 行；若逼近上限，进一步拆分子模块。
+- [x] M1-CTX3_5-003 保证单个函数不超过 50 行；确需超过时在函数注释中说明原因与不可拆分点。
+- [x] M1-CTX3_5-004 为公共函数与关键逻辑补充清晰注释，明确函数功能与实现细节。
 
 ### Context 4：`sr-runner` 的 `monitor/cleanup`
 
-- [ ] M1-CTX4-001 实现 `monitor`：周期采样 cgroup v2 CPU/内存指标。
-- [ ] M1-CTX4-002 将采样结果写入 `resource.sampled` 事件。
-- [ ] M1-CTX4-003 实现超时控制并映射 `SR-RUN-003`。
-- [ ] M1-CTX4-004 实现退出采集并写入 `vm.exited` 事件（含 exitCode）。
-- [ ] M1-CTX4-005 实现 `cleanup`：清理临时资源与状态回收。
-- [ ] M1-CTX4-006 `cleanup` 完成后写入 `run.cleaned` 事件。
-- [ ] M1-CTX4-007 cleanup 异常时写入 `run.failed` 事件并保留错误码。
-- [ ] M1-CTX4-008 为状态机迁移增加单元测试（prepared/running/finished/failed）。
+- [x] M1-CTX4-001 实现 `monitor`：周期采样 cgroup v2 CPU/内存指标。
+- [x] M1-CTX4-002 将采样结果写入 `resource.sampled` 事件。
+- [x] M1-CTX4-003 实现超时控制并映射 `SR-RUN-003`。
+- [x] M1-CTX4-004 实现退出采集并写入 `vm.exited` 事件（含 exitCode）。
+- [x] M1-CTX4-005 实现 `cleanup`：清理临时资源与状态回收。
+- [x] M1-CTX4-006 `cleanup` 完成后写入 `run.cleaned` 事件。
+- [x] M1-CTX4-007 cleanup 异常时写入 `run.failed` 事件并保留错误码。
+- [x] M1-CTX4-008 为状态机迁移增加单元测试（prepared/running/finished/failed）。
 
 ### Context 5：`sr-evidence` 事件链与报告生成
 
@@ -117,10 +124,10 @@
 ## 5. 待确认项（文档未完全明确，实施前需确认）
 
 - [ ] M1-Q-001 Firecracker/jailer 二进制在本地与 CI 的标准路径与版本约束。
-- [ ] M1-Q-002 测试环境是否允许真实 microVM 启动，或需提供 mock runner 模式。
+- [x] M1-Q-002 已确认：优先支持不启动真实 VM 的实现与测试；完成后补充真实 Firecracker 启动验证。
 - [ ] M1-Q-003 `kernel/rootfs` 产物来源与校验基线（仓库内置、外部挂载或环境注入）。
 - [ ] M1-Q-004 `integrity.digest` 的精确计算口径（整报告规范化 JSON 或字段拼接）。
-- [ ] M1-Q-005 资源采样周期默认值与超时默认值是否固定为 `300s`。
+- [x] M1-Q-005 已确认：采样周期提供默认值且可指定；`timeoutSec` 继续由 `runtimeContext.timeoutSec` 明确传入。
 
 ## 6. 完成定义（DoD）
 

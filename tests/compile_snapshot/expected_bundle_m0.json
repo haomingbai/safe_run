@@ -9,10 +9,6 @@
       "mem_size_mib": 256,
       "smt": false,
       "vcpu_count": 1
-    },
-    "rootfs": {
-      "path": "artifacts/rootfs.ext4",
-      "readOnly": true
     }
   },
   "jailerPlan": {
@@ -32,13 +28,7 @@
   "evidencePlan": {
     "enabled": true,
     "events": [
-      "compile",
-      "run.prepared",
-      "vm.started",
-      "resource.sampled",
-      "vm.exited",
-      "run.cleaned",
-      "run.failed"
+      "compile"
     ]
   }
 }

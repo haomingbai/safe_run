@@ -9,7 +9,11 @@ pub struct ErrorItem {
 }
 
 impl ErrorItem {
-    pub fn new(code: impl Into<String>, path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(
+        code: impl Into<String>,
+        path: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             code: code.into(),
             path: path.into(),

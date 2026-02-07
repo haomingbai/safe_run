@@ -6,7 +6,10 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
+sr-common = { path = "../sr-common" }
 sr-compiler = { path = "../sr-compiler" }
+sr-evidence = { path = "../sr-evidence" }
+nix.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true

@@ -20,8 +20,10 @@ fn valid_case_passes() {
 
 #[test]
 fn invalid_case_rejects_allowlist() {
-    let policy = load_policy_from_path(&repo_file("tests/policy_invalid_cases/network_allowlist.yaml"))
-        .expect("load invalid policy");
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/network_allowlist.yaml",
+    ))
+    .expect("load invalid policy");
     let result = validate_policy(policy);
     assert!(!result.valid);
     assert!(result.errors.iter().any(|e| e.code == SR_POL_003));
@@ -29,15 +31,19 @@ fn invalid_case_rejects_allowlist() {
 
 #[test]
 fn missing_required_field_returns_sr_pol_001() {
-    let err = load_policy_from_path(&repo_file("tests/policy_invalid_cases/missing_runtime.yaml"))
-        .expect_err("missing runtime should fail on parse");
+    let err = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/missing_runtime.yaml",
+    ))
+    .expect_err("missing runtime should fail on parse");
     assert_eq!(err.code, SR_POL_001);
 }
 
 #[test]
 fn invalid_cpu_format_returns_sr_pol_002() {
-    let policy = load_policy_from_path(&repo_file("tests/policy_invalid_cases/invalid_cpu_format.yaml"))
-        .expect("load invalid cpu policy");
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/invalid_cpu_format.yaml",
+    ))
+    .expect("load invalid cpu policy");
     let result = validate_policy(policy);
     assert!(!result.valid);
     assert!(result.errors.iter().any(|e| e.code == SR_POL_002));
@@ -45,9 +51,10 @@ fn invalid_cpu_format_returns_sr_pol_002() {
 
 #[test]
 fn invalid_memory_format_returns_sr_pol_002() {
-    let policy =
-        load_policy_from_path(&repo_file("tests/policy_invalid_cases/invalid_memory_format.yaml"))
-            .expect("load invalid memory policy");
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/invalid_memory_format.yaml",
+    ))
+    .expect("load invalid memory policy");
     let result = validate_policy(policy);
     assert!(!result.valid);
     assert!(result.errors.iter().any(|e| e.code == SR_POL_002));
@@ -55,8 +62,10 @@ fn invalid_memory_format_returns_sr_pol_002() {
 
 #[test]
 fn missing_runtime_args_returns_sr_pol_001() {
-    let err = load_policy_from_path(&repo_file("tests/policy_invalid_cases/missing_runtime_args.yaml"))
-        .expect_err("missing runtime.args should fail on parse");
+    let err = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/missing_runtime_args.yaml",
+    ))
+    .expect_err("missing runtime.args should fail on parse");
     assert_eq!(err.code, SR_POL_001);
 }
 
