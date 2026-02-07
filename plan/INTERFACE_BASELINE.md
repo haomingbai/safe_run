@@ -20,6 +20,11 @@
   - `mounts[]`（M2 起强化）
   - `audit.level`
 
+`mounts[]` 字段命名约定（与现有实现对齐）：
+
+- 规范字段名：`source` / `target` / `read_only`。
+- 兼容输入别名（additive，便于文档迁移）：`hostPath -> source`、`guestPath -> target`、`readOnly -> read_only`。
+
 ### 2.2 I-RP-001 RunReport
 
 - 类型：JSON

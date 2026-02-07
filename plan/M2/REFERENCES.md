@@ -17,3 +17,7 @@
 - Linux mount 命名空间与只读挂载相关文档。
 - 路径 canonicalization 安全实践资料。
 - 项目草案：`DRAFT.md`。
+
+## 4. 本阶段澄清文档（项目内）
+
+- `plan/M2/MOUNT_CLARIFICATIONS.md`

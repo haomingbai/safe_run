@@ -1,208 +1,136 @@
-# TODO：M1 阶段执行计划（多上下文）
+# TODO：M2 阶段执行计划（测试先行 / 单窗口 Stage）
 
 ## 0. 使用规则
 
 - 任务状态用 Markdown 勾选框维护：`[ ]` 未完成，`[x]` 已完成。
-- 每次实现任务后，必须同步更新本文件对应勾选状态。
-- 若与 `plan/` 设计约束冲突，以 `plan/` 为准，并先停下提问确认。
+- 每完成一个 Stage：至少跑对应 `cargo test ...`，并回填本文件。
+- 所有结论与实现必须可追溯到 `plan/`；若需改变接口语义，必须先更新 `plan/` 并获得确认（见 AGENTS.md）。
 
-## 1. 依据文档（必须先读）
+## 1. 依据文档（唯一事实来源）
 
-- `plan/OVERVIEW.md`
-- `plan/INTERFACE_BASELINE.md`
-- `plan/M1/OVERVIEW.md`
-- `plan/M1/MODULES.md`
-- `plan/M1/INTERFACES.md`
-- `plan/M1/ARCHITECTURE.md`
-- `plan/M1/REFERENCES.md`
+- plan/OVERVIEW.md
+- plan/INTERFACE_BASELINE.md
+- plan/M2/OVERVIEW.md
+- plan/M2/MODULES.md
+- plan/M2/INTERFACES.md
+- plan/M2/ARCHITECTURE.md
+- plan/M2/REFERENCES.md
+- 本执行拆分来源：M2_STAGE_PLAN.md（仅作拆分与执行口径，不覆盖 plan/ 约束）
 
-## 2. 复杂度评估结论
+## 2. M2 阶段硬约束（必须始终满足）
 
-- 结论：M1 从当前 M0 基线到完整交付，不适合在单一上下文窗口内一次性完成。
-- 原因：需要新增 `sr-runner`、`sr-evidence` 两个模块，扩展 `sr-cli` 与 `sr-compiler`，并补齐运行失败路径、报告完整性与集成测试。
-- 建议：按 8 个上下文窗口分批实现，每批完成后执行测试并回填勾选状态。
+- [ ] M2-C-001 接口兼容：仅 additive change；禁止删除/重命名已发布字段。
+- [ ] M2-C-002 M0-M2 网络固定：`network.mode=none`；`CompileBundle.networkPlan` 必须保持 `null`。
+- [ ] M2-C-003 `PolicySpec.runtime.args` 与 `PolicySpec.mounts` 必须显式存在（可为空数组但不可缺失）。
+- [ ] M2-C-004 挂载决策必须走 `sr-policy` 统一策略引擎，禁止绕过。
 
-## 3. M1 阶段硬约束检查
+## 3. 待确认（信息不足会导致“臆造实现”）
 
-- [x] M1-C-001 网络模式固定 `network.mode=none`（不得提前实现 allowlist 生效）。
-- [x] M1-C-002 `I-PL-001`、`I-VA-001`、`I-CP-001` 字段与语义保持兼容。
-- [x] M1-C-003 仅新增字段（additive change），不得删除或重命名已发布字段。
-- [x] M1-C-004 `RunReport.schemaVersion` 固定为 `safe-run.report/v1`。
-- [x] M1-C-005 错误码命名空间必须使用 `SR-RUN-*`、`SR-EVD-*`（以及既有 `SR-POL-*`、`SR-CMP-*`）。
+> 你在 M2_STAGE_PLAN.md 已给出方向，但仍需要把“可执行参数/机制”定稿，否则无法写出不歧义的测试与实现。
 
-## 4. 上下文窗口拆分计划
+- [x] M2-Q-001 宿主路径白名单“配置文件”形态与加载位置已定稿：
+  - 来源优先级：CLI `--mount-allowlist` > 环境变量 `SAFE_RUN_MOUNT_ALLOWLIST` > 内置默认。
+  - 格式：YAML（带 `schemaVersion: safe-run.mount-allowlist/v1`）。
+  - 未提供配置时：使用内置默认白名单（与现有示例对齐）。
+- [x] M2-Q-002 guestPath 命名空间规约已定稿：
+  - guest allowlist 前缀来自 allowlist 配置（默认 `['/data']`）。
+  - 关键系统路径 denylist 不可绕开；M2 仅允许扩展 allowlist，不允许配置绕开 denylist。
+- [x] M2-Q-003 “风险组合”已定稿（不新增字段）：
+  - 依据 `plan/M2/OVERVIEW.md` 的验收项“可写挂载 + 高权限执行”拒绝。
+  - M2 采取最小且不歧义规则：`mounts[].read_only` 必须为 `true`；否则返回 `SR-POL-103`。
+  - 若后续阶段要支持可写挂载，必须先在 `plan/` 中新增可证明的权限模型字段（additive）再放开。
+- [x] M2-Q-004 mounts 字段命名映射已定稿：
+  - 规范字段名：`source/target/read_only`；兼容输入别名：`hostPath/guestPath/readOnly`。
 
-### Context 1：脚手架与接口骨架
+## Stage 0：需求/设计确认与 plan/ 补丁（必须先完成）
 
-- [x] M1-CTX1-001 在 workspace 新增 crate：`crates/sr-runner`。
-- [x] M1-CTX1-002 在 workspace 新增 crate：`crates/sr-evidence`。
-- [x] M1-CTX1-003 更新根 `Cargo.toml` 的 workspace members。
-- [x] M1-CTX1-004 在 `sr-common` 增加错误码常量：`SR-RUN-001`、`SR-RUN-002`、`SR-RUN-003`。
-- [x] M1-CTX1-005 在 `sr-common` 增加错误码常量：`SR-EVD-001`、`SR-EVD-002`。
-- [x] M1-CTX1-006 在 `sr-runner` 定义 `I-RN-001` 请求/响应结构体（含 `runId/state/artifacts`）。
-- [x] M1-CTX1-007 在 `sr-evidence` 定义 `I-EV-001` 事件结构体（含 `hashPrev/hashSelf`）。
-- [x] M1-CTX1-008 在 `sr-evidence` 定义 `I-RP-001` 的 M1 字段子集结构体。
-- [x] M1-CTX1-009 为新增结构体补充最小序列化单元测试。
+**目标**：让 Stage 1-6 的测试与实现都有明确可执行的规范。
 
-### Context 2：`sr-compiler` M1 可执行输出扩展
+- [x] M2-S0-001 将“挂载白名单配置文件”最小规范写入 plan/M2（来源优先级 + YAML schemaVersion + 默认值）。
+- [x] M2-S0-002 将“guestPath 命名空间 + 关键路径 denylist 不可绕开”写入 plan/M2。
+- [x] M2-S0-003 将“风险组合（可写挂载）处理：M2 禁止可写挂载，不新增字段”写入 plan/M2。
+- [x] M2-S0-004 将 mounts 字段映射策略（canonical + alias）写入 plan/INTERFACE_BASELINE.md 与 plan/M2/INTERFACES.md。
 
-- [x] M1-CTX2-001 保留 `CompileBundle` 字段名与结构不变（兼容 M0）。
-- [x] M1-CTX2-002 将编译输出从“仅 dry-run 演示”扩展到“可供 runner 使用”的配置内容。
-- [x] M1-CTX2-003 明确并固化 `networkPlan=null`（M1 禁止网络能力）。
-- [x] M1-CTX2-004 扩展 `evidencePlan.events`，覆盖 M1 事件类型所需集合。
-- [x] M1-CTX2-005 新增编译失败分支测试（字段缺失/非法映射）。
-- [x] M1-CTX2-006 新增编译输出兼容性快照测试（仅 additive 变化）。
+### 验收标准（可执行）
 
-### Context 3：`sr-runner` 的 `prepare/launch`
+- [ ] M2-A0-001 完成上述确认后，本 TODO 的 Stage 1-6 不再依赖“口头假设”。
 
-- [x] M1-CTX3-001 实现 `prepare`：创建 run 工作目录与产物目录。
-- [x] M1-CTX3-002 实现 `prepare`：初始化运行上下文（含 `timeoutSec`）。
-- [x] M1-CTX3-003 实现 `launch`：组装 jailer 与 Firecracker 启动参数。
-- [x] M1-CTX3-004 实现 `launch`：启动前写入 `run.prepared` 事件。
-- [x] M1-CTX3-005 实现 `launch`：成功启动后写入 `vm.started` 事件。
-- [x] M1-CTX3-006 实现 `launch` 失败路径并映射 `SR-RUN-002`。
-- [x] M1-CTX3-007 失败时触发统一清理入口（不可跳过 cleanup）。
+---
 
-### Context 3.5：代码拆分与注释规范化
+## Stage 1：接口对齐与错误码脚手架（测试先行）
 
-- [x] M1-CTX3_5-001 按模块职责拆分 `sr-runner` 源码（`prepare/launch/event` 等），确保单文件职责单一。
-- [x] M1-CTX3_5-002 保证单文件不超过 1000 行；若逼近上限，进一步拆分子模块。
-- [x] M1-CTX3_5-003 保证单个函数不超过 50 行；确需超过时在函数注释中说明原因与不可拆分点。
-- [x] M1-CTX3_5-004 为公共函数与关键逻辑补充清晰注释，明确函数功能与实现细节。
+- [ ] M2-S1-T001（先测试）sr-policy：解析 `hostPath/guestPath/readOnly` 样例成功并规范化到内部结构。
+- [ ] M2-S1-T002（先测试）sr-policy：新增无效用例覆盖 `hostPath/source` 为空、`guestPath/target` 非绝对路径。
+- [ ] M2-S1-I001（实现）sr-policy::Mount 增加 serde alias：`hostPath->source`、`guestPath->target`、`readOnly->read_only`（additive）。
+- [ ] M2-S1-I002（实现）sr-common 增加错误码常量：`SR_POL_101/102/103`、`SR_RUN_101`（按 plan/M2/INTERFACES.md）。
 
-### Context 4：`sr-runner` 的 `monitor/cleanup`
+### Stage 1 验收标准
 
-- [x] M1-CTX4-001 实现 `monitor`：周期采样 cgroup v2 CPU/内存指标。
-- [x] M1-CTX4-002 将采样结果写入 `resource.sampled` 事件。
-- [x] M1-CTX4-003 实现超时控制并映射 `SR-RUN-003`。
-- [x] M1-CTX4-004 实现退出采集并写入 `vm.exited` 事件（含 exitCode）。
-- [x] M1-CTX4-005 实现 `cleanup`：清理临时资源与状态回收。
-- [x] M1-CTX4-006 `cleanup` 完成后写入 `run.cleaned` 事件。
-- [x] M1-CTX4-007 cleanup 异常时写入 `run.failed` 事件并保留错误码。
-- [x] M1-CTX4-008 为状态机迁移增加单元测试（prepared/running/finished/failed）。
+- [ ] M2-S1-A001 `cargo test -p sr-policy`
+- [ ] M2-S1-A002 `cargo test -p sr-common`（如该 crate 有测试）
 
-### Context 5：`sr-evidence` 事件链与报告生成
+## Stage 2：PathSecurityEngine（canonicalize + 白名单前缀）
 
-- [x] M1-CTX5-001 实现 `event_writer`：事件顺序写入与落盘。
-- [x] M1-CTX5-002 实现 `hashing`：事件 `hashPrev -> hashSelf` 链式计算。
-- [x] M1-CTX5-003 实现 artifacts hash：`kernelHash/rootfsHash/policyHash/commandHash`。
-- [x] M1-CTX5-004 实现 `report_builder`：生成 `run_report.json`（M1 子集字段）。
-- [x] M1-CTX5-005 实现 `integrity.digest` 生成（可复算）。
-- [x] M1-CTX5-006 事件写入失败映射 `SR-EVD-001`。
-- [x] M1-CTX5-007 报告生成失败映射 `SR-EVD-002`。
-- [x] M1-CTX5-008 新增报告结构校验单元测试（字段完整性与类型）。
+- [ ] M2-S2-T001（先测试）临时目录下 allowlisted 路径通过。
+- [ ] M2-S2-T002（先测试）allowlisted 目录内 symlink 指向非白名单目录时拒绝。
+- [ ] M2-S2-T003（先测试）`..` 穿越 canonicalize 后落到白名单外时拒绝。
+- [ ] M2-S2-I001（实现）新增 `PathSecurityEngine`（crates/sr-policy/src/path_security.rs）。
+- [ ] M2-S2-I002（实现）在 `validate_policy()` 中调用；失败映射 `SR-POL-101`。
 
-### Context 6：`sr-cli` 新增 `run` 子命令
+### Stage 2 验收标准
 
-- [x] M1-CTX6-001 在 CLI 新增 `safe-run run --policy <file>`。
-- [x] M1-CTX6-002 `run` 命令复用 `validate -> compile -> runner -> evidence` 链路。
-- [x] M1-CTX6-003 `run` 成功返回 `runId`、`state`、`report` 路径。
-- [x] M1-CTX6-004 `run` 失败统一输出标准错误结构与错误码。
-- [x] M1-CTX6-005 保持 `validate`、`compile --dry-run` 既有行为不变。
-- [x] M1-CTX6-006 补充 CLI 命令分支与参数校验测试。
+- [ ] M2-S2-A001 `cargo test -p sr-policy`
 
-### Context 7：集成测试与示例
+## Stage 3：MountConstraints（敏感宿主路径 + guestPath 命名空间）
 
-- [x] M1-CTX7-001 新增 `tests/run_smoke`：最小任务执行与退出验证。
-- [x] M1-CTX7-002 新增 `tests/run_failure_paths`：启动失败、超时、异常退出。
-- [x] M1-CTX7-003 新增 `tests/report_schema_v1`：`run_report.json` 字段校验。
-- [x] M1-CTX7-004 新增事件链一致性测试：`hashPrev/hashSelf` 可重算。
-- [x] M1-CTX7-005 新增 `examples/`：无网执行示例。
-- [x] M1-CTX7-006 新增 `examples/`：只读根示例。
-- [x] M1-CTX7-007 新增 `examples/`：资源限制示例。
+- [ ] M2-S3-T001（先测试）source canonicalize 后位于敏感宿主路径（如 `/proc`、`/sys`、`/dev`）拒绝。
+- [ ] M2-S3-T002（先测试）target 不在允许命名空间或覆盖关键路径时拒绝。
+- [ ] M2-S3-I001（实现）新增 `mount_constraints.rs`，落地 denylist + 命名空间规则。
+- [ ] M2-S3-I002（实现）错误码映射：target/命名空间违规使用 `SR-POL-102`。
 
-### Context 8：验收与归档
+### Stage 3 验收标准
 
-- [x] M1-CTX8-001 增加 `M1_CHECKLIST.md`（仿照 M0 清单，逐项映射 M1 文档）。
-- [x] M1-CTX8-002 更新 `README.md` 到 M1 命令与边界说明。
-- [x] M1-CTX8-003 执行 `cargo test` 并记录结果。
-- [x] M1-CTX8-004 手工跑通 `safe-run run --policy ...` 最小链路并记录产物路径。（沙箱外验证：`runId=sr-1770459110-232306729`，`state=finished`，`report=/tmp/safe-run/runs/sr-1770459110-232306729/artifacts/run_report.json`）
-- [x] M1-CTX8-005 核对错误码覆盖：`SR-RUN-001/002/003`、`SR-EVD-001/002`。
-- [x] M1-CTX8-006 核对阶段边界：确认没有实现 M2/M3 能力（挂载强化/网络白名单）。
-- [x] M1-CTX8-007 汇总文档依据并形成交付说明。
+- [ ] M2-S3-A001 `cargo test -p sr-policy`
 
-### Context 8 后续修复任务（真实执行阻塞）
+## Stage 4：编译阶段 MountPlanBuilder（可回滚计划 + 快照测试）
 
-- [x] M1-FIX8-001 在 `sr-runner` 启动参数中显式传入 `--api-sock <writable_path>`，避免 Firecracker API socket 权限问题（对齐 M1-Q-001）。
-- [x] M1-FIX8-002 增加 jailer 可执行文件预检与更明确的启动前错误提示，避免运行到 launch 阶段才失败。
-- [x] M1-FIX8-003 在具备真实 `firecracker`（并使用本机兼容 `jailer` 脚本）环境后重新执行 `safe-run run --policy examples/m1_network_none.yaml`，结果 `state=finished`。
+- [ ] M2-S4-T001（先测试）sr-compiler：包含 mounts 的 PolicySpec 编译输出必须包含“挂载计划”（需以 Stage 0 的设计确认决定承载位置）。
+- [ ] M2-S4-T002（先测试）挂载计划快照测试，确保规则变更可感知。
+- [ ] M2-S4-I001（实现）新增 crates/sr-compiler/src/mount_plan.rs（MountPlanBuilder）。
+- [ ] M2-S4-I002（实现）注入编译输出，且保持 `networkPlan=null`。
 
-### Context 8 文档与工具补充（后续开发可用性）
+### Stage 4 验收标准
 
-- [x] M1-DOC8-001 在 `AGENTS.md` 固化 jailer/firecracker 缺失时的处理要求：先执行本地下载脚本，再进行真实运行验证。
-- [x] M1-DOC8-002 在 `README.md` 补充“本地自举 firecracker/jailer”与对应 PATH 用法，减少对系统预装依赖。
-- [x] M1-OPS8-001 新增 `scripts/get_firecracker.sh`，可按 release 版本下载并安装 `firecracker+jailer` 到 `artifacts/bin/`。
-- [x] M1-OPS8-002 为下载脚本增加默认本地代理 `127.0.0.1:7890` 与可配置开关，提升受限网络环境可用性。
+- [ ] M2-S4-A001 `cargo test -p sr-compiler`
 
-## 5. 待确认项（文档未完全明确，实施前需确认）
+## Stage 5：Runner 挂载执行与失败回滚（尽量不依赖 root）
 
-- [x] M1-Q-001 已确认：本地 Firecracker 可用, 但是不存在 jailer，且需显式传入 `--api-sock`（例如 `/tmp/firecracker.socket`）。
-- [x] M1-Q-002 已确认：优先支持不启动真实 VM 的实现与测试；完成后补充真实 Firecracker 启动验证。
-- [x] M1-Q-003 已确认：按 Firecracker 官方文档获取 rootfs/kernel，脚本落库、产物忽略提交。
-- [x] M1-Q-004 已确认：`integrity.digest` 为“报告 JSON（将 `integrity.digest` 置空）”的规范化 JSON SHA-256。
-- [x] M1-Q-006 已确认：`policyHash` 与 `commandHash` 采用规范化 JSON SHA-256（统一 JSON 规范化规则）。
-- [x] M1-Q-005 已确认：采样周期提供默认值且可指定；`timeoutSec` 继续由 `runtimeContext.timeoutSec` 明确传入。
+- [ ] M2-S5-T001（先测试）挂载计划执行顺序/回滚顺序的纯逻辑测试（不做真实 mount）。
+- [ ] M2-S5-T002（可选）root-only 最小集成测试使用 `#[ignore]`。
+- [ ] M2-S5-I001（实现）新增 mount_executor.rs / rollback.rs，按计划应用并逆序回滚。
+- [ ] M2-S5-I002（实现）挂载应用失败返回 `SR-RUN-101`。
 
-## 6. 完成定义（DoD）
+### Stage 5 验收标准
 
-- [x] M1-DOD-001 `safe-run run` 可稳定执行最小不可信任务并退出。
-- [x] M1-DOD-002 `run_report.json` 满足 `safe-run.report/v1` M1 字段子集要求。
-- [x] M1-DOD-003 失败路径有事件留痕且返回标准错误码。
-- [x] M1-DOD-004 事件链与 artifacts hash 可重算并通过测试。
-- [x] M1-DOD-005 所有实现和文档均可追溯到 `plan/` 设计文件。
+- [ ] M2-S5-A001 `cargo test -p sr-runner`
 
-## 7. M1 验收补齐修复计划（新增）
+## Stage 6：证据链与报告 mountAudit（additive）
 
-> 要求：运行问题先写测试暴露，再修复；文档问题直接修复。
+- [ ] M2-S6-T001（先测试）从 events.jsonl（含 mount.validated/rejected/applied）生成报告，断言包含 `mountAudit` 且计数/reasons 正确。
+- [ ] M2-S6-I001（实现）sr-evidence 增加挂载审计聚合器，注入 `RunReport.mountAudit`（additive）。
+- [ ] M2-S6-I002（实现）补齐新事件类型：mount.validated / mount.rejected / mount.applied。
 
-### 7.1 运行问题：工作目录内核/根文件系统不可达
+### Stage 6 验收标准
 
-- [x] M1-FIX9-001 先新增失败复现测试：在 `sr-runner` 真实/模拟运行中强制使用运行工作目录，验证 `firecrackerConfig` 相对路径在 workdir 下不可达会失败（应覆盖 `SR-RUN-002` 或 `SR-EVD-002` 的明确错误路径）。
-- [x] M1-FIX9-002 修复：在 `prepare` 阶段将 `kernel_image_path` 与 `rootfs` 解析为可用路径（如复制到 workdir 或改写为绝对路径），并更新相关单元测试与快照测试。
+- [ ] M2-S6-A001 `cargo test -p sr-evidence`
+- [ ] M2-S6-A002 `cargo test`
 
-### 7.2 一致性问题：`compile` 事件缺失
+---
 
-- [x] M1-FIX9-003 先新增测试：编译 + 运行链路输出的事件流必须包含 `compile` 事件（对齐 `evidencePlan.events`）。
-- [x] M1-FIX9-004 修复：在编译或运行链路中补写 `compile` 事件，并确保 hash 链可重算。
+## M2 总体验收标准（阶段 DoD，可编译可运行验证）
 
-### 7.3 文档/文案问题（直接修复）
-
-- [x] M1-FIX9-005 直接修复 CLI 文案：`safe-run` 的 `about` 从 M0 更新为 M1。
-
-## 8. M1 验收遗留问题修复计划（新增）
-
-> 问题：cleanup 先删 `firecracker-config.json`，导致报告阶段读取失败。
-
-### 8.1 先用测试复现
-
-- [x] M1-FIX10-001 新增 CLI 回归测试：执行 `prepare -> cleanup -> build_report` 路径，断言报告可生成（当前应失败）。
-- [x] M1-FIX10-002 为上述测试补齐最小 fake 产物（kernel/rootfs/config/events）与临时工作目录清理。
-
-### 8.2 方案确定与实现
-
-- [x] M1-FIX10-003 方案评估：在 `cleanup` 前生成报告，或在 `cleanup` 中保留 `firecracker-config.json`，或在 `prepare` 中将关键字段缓存到报告输入。
-- [x] M1-FIX10-004 选定方案并实现（需保持 M1 语义与接口不变，避免引入 M2/M3 能力）。
-
-### 8.3 兼容性与回归验证
-
-- [x] M1-FIX10-005 更新/新增单元测试与集成测试，确保 `run_report.json` 始终可生成。
-- [x] M1-FIX10-006 校验 `integrity.digest`、`policyHash`、`commandHash` 仍可复算。
-- [x] M1-FIX10-007 更新 `M1_CHECKLIST.md` 验收记录（包含修复后验证结果）。
-
-## 9. M1 验收错误码回归修复计划（新增）
-
-> 问题：异常退出（非零 exit code）未返回标准 `SR-RUN-*` 错误码。
-
-### 9.1 复现与定位
-
-- [x] M1-FIX11-001 复现并确认问题：`monitor` 非零退出仅置 `RunState::Failed`，`run` 命令仍返回成功码。
-
-### 9.2 修复实现
-
-- [x] M1-FIX11-002 在 `sr-runner monitor` 非零退出路径补写 `run.failed` 事件，并附 `errorCode=SR-RUN-001`。
-- [x] M1-FIX11-003 在 `sr-cli run` 生成报告后根据失败状态返回 `SR-RUN-001`，不再返回成功退出码。
-
-### 9.3 验证与归档
-
-- [x] M1-FIX11-004 补充并通过测试：异常退出事件留痕 + CLI 错误码映射。
-- [x] M1-FIX11-005 更新 `M1_CHECKLIST.md` 验收记录。
+- [ ] M2-DOD-001 路径逃逸（`..` / symlink / 非白名单）稳定拦截并返回正确错误码（SR-POL-101/102/103）。
+- [ ] M2-DOD-002 编译输出包含可回滚挂载计划，且快照测试能感知变更。
+- [ ] M2-DOD-003 挂载应用失败能回滚并返回 SR-RUN-101。
+- [ ] M2-DOD-004 run_report.json additive 增加 mountAudit，并可从事件流重建。
+- [ ] M2-DOD-005 约束回归：network 固定 none，CompileBundle.networkPlan 仍为 null。
