@@ -60,6 +60,14 @@
 }
 ```
 
+### 3.1 Hash 口径（M1）
+
+- `policyHash`：对 `PolicySpec` 进行 JSON 规范化后计算 SHA-256。
+- `commandHash`：对 `{"command": <runtime.command>, "args": <runtime.args>}` 进行 JSON 规范化后计算 SHA-256。
+- `integrity.digest`：对整份 `RunReport` 进行 JSON 规范化后计算 SHA-256，**计算前需将 `integrity.digest` 置空字符串**。
+
+JSON 规范化规则遵循全局基线（字段排序、无空白字符、数组保持顺序）。
+
 ## 4. 错误码扩展
 
 - `SR-RUN-001`：Runner 初始化失败

@@ -20,6 +20,17 @@ cargo run -p sr-cli -- compile --dry-run --policy tests/compile_snapshot/minimal
 cargo test
 ```
 
+## Rootfs 与内核产物
+
+为 M1 运行准备 Firecracker 所需的 kernel/rootfs，可使用脚本：
+
+```bash
+./scripts/get_rootfs.sh
+```
+
+脚本会把 `vmlinux` 与 `rootfs.ext4` 放入 `artifacts/`（已加入 .gitignore）。
+依赖工具：`curl`、`wget`、`unsquashfs`（squashfs-tools）、`mkfs.ext4`（e2fsprogs）。
+
 ## M0 能力边界
 
 - 仅支持 `network.mode=none`

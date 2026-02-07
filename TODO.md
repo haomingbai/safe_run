@@ -83,14 +83,14 @@
 
 ### Context 5：`sr-evidence` 事件链与报告生成
 
-- [ ] M1-CTX5-001 实现 `event_writer`：事件顺序写入与落盘。
-- [ ] M1-CTX5-002 实现 `hashing`：事件 `hashPrev -> hashSelf` 链式计算。
-- [ ] M1-CTX5-003 实现 artifacts hash：`kernelHash/rootfsHash/policyHash/commandHash`。
-- [ ] M1-CTX5-004 实现 `report_builder`：生成 `run_report.json`（M1 子集字段）。
-- [ ] M1-CTX5-005 实现 `integrity.digest` 生成（可复算）。
-- [ ] M1-CTX5-006 事件写入失败映射 `SR-EVD-001`。
-- [ ] M1-CTX5-007 报告生成失败映射 `SR-EVD-002`。
-- [ ] M1-CTX5-008 新增报告结构校验单元测试（字段完整性与类型）。
+- [x] M1-CTX5-001 实现 `event_writer`：事件顺序写入与落盘。
+- [x] M1-CTX5-002 实现 `hashing`：事件 `hashPrev -> hashSelf` 链式计算。
+- [x] M1-CTX5-003 实现 artifacts hash：`kernelHash/rootfsHash/policyHash/commandHash`。
+- [x] M1-CTX5-004 实现 `report_builder`：生成 `run_report.json`（M1 子集字段）。
+- [x] M1-CTX5-005 实现 `integrity.digest` 生成（可复算）。
+- [x] M1-CTX5-006 事件写入失败映射 `SR-EVD-001`。
+- [x] M1-CTX5-007 报告生成失败映射 `SR-EVD-002`。
+- [x] M1-CTX5-008 新增报告结构校验单元测试（字段完整性与类型）。
 
 ### Context 6：`sr-cli` 新增 `run` 子命令
 
@@ -123,10 +123,11 @@
 
 ## 5. 待确认项（文档未完全明确，实施前需确认）
 
-- [ ] M1-Q-001 Firecracker/jailer 二进制在本地与 CI 的标准路径与版本约束。
+- [x] M1-Q-001 已确认：本地 Firecracker 可用，但需显式传入 `--api-sock`（例如 `/tmp/firecracker.socket`）。
 - [x] M1-Q-002 已确认：优先支持不启动真实 VM 的实现与测试；完成后补充真实 Firecracker 启动验证。
-- [ ] M1-Q-003 `kernel/rootfs` 产物来源与校验基线（仓库内置、外部挂载或环境注入）。
-- [ ] M1-Q-004 `integrity.digest` 的精确计算口径（整报告规范化 JSON 或字段拼接）。
+- [x] M1-Q-003 已确认：按 Firecracker 官方文档获取 rootfs/kernel，脚本落库、产物忽略提交。
+- [x] M1-Q-004 已确认：`integrity.digest` 为“报告 JSON（将 `integrity.digest` 置空）”的规范化 JSON SHA-256。
+- [x] M1-Q-006 已确认：`policyHash` 与 `commandHash` 采用规范化 JSON SHA-256（统一 JSON 规范化规则）。
 - [x] M1-Q-005 已确认：采样周期提供默认值且可指定；`timeoutSec` 继续由 `runtimeContext.timeoutSec` 明确传入。
 
 ## 6. 完成定义（DoD）
