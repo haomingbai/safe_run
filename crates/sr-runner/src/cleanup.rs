@@ -17,6 +17,7 @@ pub(crate) fn cleanup_run(prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
         "cleanup.runtimeContext",
     )?;
     remove_file_if_exists(prepared.vm_pid_path().as_path(), "cleanup.vmPid")?;
+    remove_file_if_exists(prepared.api_socket_path().as_path(), "cleanup.apiSocket")?;
     fs::write(prepared.cleanup_marker_path(), "cleanup completed").map_err(|err| {
         ErrorItem::new(
             SR_RUN_001,

@@ -214,6 +214,28 @@ mod tests {
             .jailer
             .args
             .contains(&"/bin/true".to_string()));
+        assert!(prepared
+            .launch_plan
+            .jailer
+            .args
+            .contains(&"--api-sock".to_string()));
+        let api_sock_arg_idx = prepared
+            .launch_plan
+            .jailer
+            .args
+            .iter()
+            .position(|arg| arg == "--api-sock")
+            .expect("jailer args should include --api-sock");
+        let expected_api_socket = prepared.api_socket_path().to_string_lossy().to_string();
+        assert_eq!(
+            prepared
+                .launch_plan
+                .jailer
+                .args
+                .get(api_sock_arg_idx + 1)
+                .map(|value| value.as_str()),
+            Some(expected_api_socket.as_str())
+        );
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
@@ -251,6 +273,31 @@ mod tests {
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
         assert!(events_raw.contains("\"type\":\"run.prepared\""));
         assert!(events_raw.contains("\"type\":\"run.failed\""));
+
+        let _ = fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn launch_preflight_failure_on_missing_firecracker_returns_run_002() {
+        let run_dir = new_temp_run_dir("launch-preflight-missing-firecracker");
+        let runner = Runner::with_runtime(RunnerRuntime {
+            jailer_bin: "/bin/true".to_string(),
+            firecracker_bin: "/definitely-not-found/safe-run-firecracker".to_string(),
+        });
+        let mut prepared = runner
+            .prepare(sample_request(&run_dir))
+            .expect("prepare should succeed");
+
+        let err = runner.launch(&mut prepared).expect_err("launch must fail");
+        assert_eq!(err.code, SR_RUN_002);
+        assert_eq!(err.path, "launch.preflight.firecracker");
+        assert_eq!(prepared.state, RunState::Failed);
+        assert!(prepared.cleanup_marker_path().exists());
+
+        let events_raw =
+            std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
+        assert!(events_raw.contains("\"type\":\"run.failed\""));
+        assert!(events_raw.contains("launch.preflight"));
 
         let _ = fs::remove_dir_all(&run_dir);
     }

@@ -1,0 +1,17 @@
+apiVersion: policy.safe-run.dev/v1alpha1
+metadata:
+  name: m1-resource-limits
+runtime:
+  command: /bin/echo
+  args:
+    - resource-limit-demo
+resources:
+  cpu:
+    max: "50000 100000"
+  memory:
+    max: 128Mi
+network:
+  mode: none
+mounts: []
+audit:
+  level: basic

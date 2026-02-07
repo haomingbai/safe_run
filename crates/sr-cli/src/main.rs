@@ -6,7 +6,7 @@ use sr_evidence::{
     EvidenceEvent, PolicySummary, ResourceUsage, RunReport,
 };
 use sr_policy::{load_policy_from_path, validate_policy, NetworkMode, PolicySpec};
-use sr_runner::{MonitorResult, Runner, RunnerControlRequest, RunState, RuntimeContext};
+use sr_runner::{MonitorResult, RunState, Runner, RunnerControlRequest, RuntimeContext};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -194,12 +194,17 @@ fn default_runtime_context(run_id: &str) -> RuntimeContext {
             .to_string(),
         timeout_sec: 300,
         sample_interval_ms: None,
-        cgroup_path: None,
+        cgroup_path: detect_default_cgroup_path(),
     }
 }
 
 fn default_workdir_for_run(run_id: &str) -> PathBuf {
-    PathBuf::from("/var/lib/safe-run/runs").join(run_id)
+    let base = std::env::var("SAFE_RUN_WORKDIR_BASE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "/tmp/safe-run/runs".to_string());
+    PathBuf::from(base).join(run_id)
 }
 
 fn derive_run_id() -> String {
@@ -217,13 +222,8 @@ fn build_and_write_report(
     report_path: &Path,
 ) -> Result<RunReport, ErrorItem> {
     let events = load_events(prepared.event_log_path().as_path())?;
-    let mut report = build_report_from_events(
-        prepared,
-        policy,
-        compile_bundle,
-        monitor_result,
-        &events,
-    )?;
+    let mut report =
+        build_report_from_events(prepared, policy, compile_bundle, monitor_result, &events)?;
     let digest = compute_integrity_digest(&report)?;
     report.integrity.digest = digest;
     write_report(report_path, &report)?;
@@ -273,7 +273,8 @@ fn compute_report_artifacts(
         "command": policy.runtime.command,
         "args": policy.runtime.args
     });
-    let (kernel_path, rootfs_path) = resolve_artifact_paths(workdir, &compile_bundle.firecracker_config)?;
+    let (kernel_path, rootfs_path) =
+        resolve_artifact_paths(workdir, &compile_bundle.firecracker_config)?;
     compute_artifact_hashes_from_json(ArtifactJsonInputs {
         kernel_path: kernel_path.as_path(),
         rootfs_path: rootfs_path.as_path(),
@@ -355,12 +356,8 @@ fn resolve_artifact_paths(
         "/boot-source/kernel_image_path",
         "artifacts.kernel",
     )?;
-    let rootfs_raw = json_string_at(
-        firecracker_config,
-        "/rootfs/path",
-        "artifacts.rootfs",
-    )
-    .or_else(|_| json_string_at(firecracker_config, "/drives/0/path", "artifacts.rootfs"))?;
+    let rootfs_raw = json_string_at(firecracker_config, "/rootfs/path", "artifacts.rootfs")
+        .or_else(|_| json_string_at(firecracker_config, "/drives/0/path", "artifacts.rootfs"))?;
     let kernel_path = resolve_path(workdir, &kernel_raw);
     let rootfs_path = resolve_path(workdir, &rootfs_raw);
     Ok((kernel_path, rootfs_path))
@@ -387,10 +384,40 @@ fn json_string_at(
 fn resolve_path(workdir: &Path, raw: &str) -> PathBuf {
     let raw_path = Path::new(raw);
     if raw_path.is_absolute() {
-        raw_path.to_path_buf()
-    } else {
-        workdir.join(raw_path)
+        return raw_path.to_path_buf();
     }
+    let workdir_path = workdir.join(raw_path);
+    if workdir_path.exists() {
+        workdir_path
+    } else {
+        raw_path.to_path_buf()
+    }
+}
+
+fn detect_default_cgroup_path() -> Option<String> {
+    let root = Path::new("/sys/fs/cgroup");
+    if has_cgroup_files(root) {
+        return Some(root.to_string_lossy().to_string());
+    }
+    let raw = fs::read_to_string("/proc/self/cgroup").ok()?;
+    for line in raw.lines() {
+        let mut parts = line.splitn(3, ':');
+        let _ = parts.next();
+        let _ = parts.next();
+        let relative = parts.next().unwrap_or_default().trim();
+        if relative.is_empty() || !relative.starts_with('/') {
+            continue;
+        }
+        let candidate = root.join(relative.trim_start_matches('/'));
+        if has_cgroup_files(candidate.as_path()) {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+fn has_cgroup_files(path: &Path) -> bool {
+    path.join("cpu.stat").is_file() && path.join("memory.current").is_file()
 }
 
 fn network_label(mode: &NetworkMode) -> &'static str {

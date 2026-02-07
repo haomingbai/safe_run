@@ -1,6 +1,6 @@
 use crate::constants::{
-    CLEANUP_MARKER_FILE, DEFAULT_CGROUP_PATH, DEFAULT_SAMPLE_INTERVAL_MS, FIRECRACKER_CONFIG_FILE,
-    RUNTIME_CONTEXT_FILE, VM_PID_FILE,
+    CLEANUP_MARKER_FILE, DEFAULT_CGROUP_PATH, DEFAULT_SAMPLE_INTERVAL_MS,
+    FIRECRACKER_API_SOCKET_FILE, FIRECRACKER_CONFIG_FILE, RUNTIME_CONTEXT_FILE, VM_PID_FILE,
 };
 use serde::{Deserialize, Serialize};
 use sr_compiler::CompileBundle;
@@ -143,6 +143,10 @@ impl PreparedRun {
 
     pub fn vm_pid_path(&self) -> PathBuf {
         self.artifacts_dir_path.join(VM_PID_FILE)
+    }
+
+    pub fn api_socket_path(&self) -> PathBuf {
+        self.artifacts_dir_path.join(FIRECRACKER_API_SOCKET_FILE)
     }
 }
 

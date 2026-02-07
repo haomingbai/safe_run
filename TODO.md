@@ -24,11 +24,11 @@
 
 ## 3. M1 阶段硬约束检查
 
-- [ ] M1-C-001 网络模式固定 `network.mode=none`（不得提前实现 allowlist 生效）。
-- [ ] M1-C-002 `I-PL-001`、`I-VA-001`、`I-CP-001` 字段与语义保持兼容。
-- [ ] M1-C-003 仅新增字段（additive change），不得删除或重命名已发布字段。
-- [ ] M1-C-004 `RunReport.schemaVersion` 固定为 `safe-run.report/v1`。
-- [ ] M1-C-005 错误码命名空间必须使用 `SR-RUN-*`、`SR-EVD-*`（以及既有 `SR-POL-*`、`SR-CMP-*`）。
+- [x] M1-C-001 网络模式固定 `network.mode=none`（不得提前实现 allowlist 生效）。
+- [x] M1-C-002 `I-PL-001`、`I-VA-001`、`I-CP-001` 字段与语义保持兼容。
+- [x] M1-C-003 仅新增字段（additive change），不得删除或重命名已发布字段。
+- [x] M1-C-004 `RunReport.schemaVersion` 固定为 `safe-run.report/v1`。
+- [x] M1-C-005 错误码命名空间必须使用 `SR-RUN-*`、`SR-EVD-*`（以及既有 `SR-POL-*`、`SR-CMP-*`）。
 
 ## 4. 上下文窗口拆分计划
 
@@ -103,27 +103,40 @@
 
 ### Context 7：集成测试与示例
 
-- [ ] M1-CTX7-001 新增 `tests/run_smoke`：最小任务执行与退出验证。
-- [ ] M1-CTX7-002 新增 `tests/run_failure_paths`：启动失败、超时、异常退出。
-- [ ] M1-CTX7-003 新增 `tests/report_schema_v1`：`run_report.json` 字段校验。
-- [ ] M1-CTX7-004 新增事件链一致性测试：`hashPrev/hashSelf` 可重算。
-- [ ] M1-CTX7-005 新增 `examples/`：无网执行示例。
-- [ ] M1-CTX7-006 新增 `examples/`：只读根示例。
-- [ ] M1-CTX7-007 新增 `examples/`：资源限制示例。
+- [x] M1-CTX7-001 新增 `tests/run_smoke`：最小任务执行与退出验证。
+- [x] M1-CTX7-002 新增 `tests/run_failure_paths`：启动失败、超时、异常退出。
+- [x] M1-CTX7-003 新增 `tests/report_schema_v1`：`run_report.json` 字段校验。
+- [x] M1-CTX7-004 新增事件链一致性测试：`hashPrev/hashSelf` 可重算。
+- [x] M1-CTX7-005 新增 `examples/`：无网执行示例。
+- [x] M1-CTX7-006 新增 `examples/`：只读根示例。
+- [x] M1-CTX7-007 新增 `examples/`：资源限制示例。
 
 ### Context 8：验收与归档
 
-- [ ] M1-CTX8-001 增加 `M1_CHECKLIST.md`（仿照 M0 清单，逐项映射 M1 文档）。
-- [ ] M1-CTX8-002 更新 `README.md` 到 M1 命令与边界说明。
-- [ ] M1-CTX8-003 执行 `cargo test` 并记录结果。
-- [ ] M1-CTX8-004 手工跑通 `safe-run run --policy ...` 最小链路并记录产物路径。
-- [ ] M1-CTX8-005 核对错误码覆盖：`SR-RUN-001/002/003`、`SR-EVD-001/002`。
-- [ ] M1-CTX8-006 核对阶段边界：确认没有实现 M2/M3 能力（挂载强化/网络白名单）。
-- [ ] M1-CTX8-007 汇总文档依据并形成交付说明。
+- [x] M1-CTX8-001 增加 `M1_CHECKLIST.md`（仿照 M0 清单，逐项映射 M1 文档）。
+- [x] M1-CTX8-002 更新 `README.md` 到 M1 命令与边界说明。
+- [x] M1-CTX8-003 执行 `cargo test` 并记录结果。
+- [x] M1-CTX8-004 手工跑通 `safe-run run --policy ...` 最小链路并记录产物路径。（沙箱外验证：`runId=sr-1770459110-232306729`，`state=finished`，`report=/tmp/safe-run/runs/sr-1770459110-232306729/artifacts/run_report.json`）
+- [x] M1-CTX8-005 核对错误码覆盖：`SR-RUN-001/002/003`、`SR-EVD-001/002`。
+- [x] M1-CTX8-006 核对阶段边界：确认没有实现 M2/M3 能力（挂载强化/网络白名单）。
+- [x] M1-CTX8-007 汇总文档依据并形成交付说明。
+
+### Context 8 后续修复任务（真实执行阻塞）
+
+- [x] M1-FIX8-001 在 `sr-runner` 启动参数中显式传入 `--api-sock <writable_path>`，避免 Firecracker API socket 权限问题（对齐 M1-Q-001）。
+- [x] M1-FIX8-002 增加 jailer 可执行文件预检与更明确的启动前错误提示，避免运行到 launch 阶段才失败。
+- [x] M1-FIX8-003 在具备真实 `firecracker`（并使用本机兼容 `jailer` 脚本）环境后重新执行 `safe-run run --policy examples/m1_network_none.yaml`，结果 `state=finished`。
+
+### Context 8 文档与工具补充（后续开发可用性）
+
+- [x] M1-DOC8-001 在 `AGENTS.md` 固化 jailer/firecracker 缺失时的处理要求：先执行本地下载脚本，再进行真实运行验证。
+- [x] M1-DOC8-002 在 `README.md` 补充“本地自举 firecracker/jailer”与对应 PATH 用法，减少对系统预装依赖。
+- [x] M1-OPS8-001 新增 `scripts/get_firecracker.sh`，可按 release 版本下载并安装 `firecracker+jailer` 到 `artifacts/bin/`。
+- [x] M1-OPS8-002 为下载脚本增加默认本地代理 `127.0.0.1:7890` 与可配置开关，提升受限网络环境可用性。
 
 ## 5. 待确认项（文档未完全明确，实施前需确认）
 
-- [x] M1-Q-001 已确认：本地 Firecracker 可用，但需显式传入 `--api-sock`（例如 `/tmp/firecracker.socket`）。
+- [x] M1-Q-001 已确认：本地 Firecracker 可用, 但是不存在 jailer，且需显式传入 `--api-sock`（例如 `/tmp/firecracker.socket`）。
 - [x] M1-Q-002 已确认：优先支持不启动真实 VM 的实现与测试；完成后补充真实 Firecracker 启动验证。
 - [x] M1-Q-003 已确认：按 Firecracker 官方文档获取 rootfs/kernel，脚本落库、产物忽略提交。
 - [x] M1-Q-004 已确认：`integrity.digest` 为“报告 JSON（将 `integrity.digest` 置空）”的规范化 JSON SHA-256。
@@ -132,8 +145,8 @@
 
 ## 6. 完成定义（DoD）
 
-- [ ] M1-DOD-001 `safe-run run` 可稳定执行最小不可信任务并退出。
-- [ ] M1-DOD-002 `run_report.json` 满足 `safe-run.report/v1` M1 字段子集要求。
-- [ ] M1-DOD-003 失败路径有事件留痕且返回标准错误码。
-- [ ] M1-DOD-004 事件链与 artifacts hash 可重算并通过测试。
-- [ ] M1-DOD-005 所有实现和文档均可追溯到 `plan/` 设计文件。
+- [x] M1-DOD-001 `safe-run run` 可稳定执行最小不可信任务并退出。
+- [x] M1-DOD-002 `run_report.json` 满足 `safe-run.report/v1` M1 字段子集要求。
+- [x] M1-DOD-003 失败路径有事件留痕且返回标准错误码。
+- [x] M1-DOD-004 事件链与 artifacts hash 可重算并通过测试。
+- [x] M1-DOD-005 所有实现和文档均可追溯到 `plan/` 设计文件。

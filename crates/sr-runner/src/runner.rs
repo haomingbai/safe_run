@@ -1,14 +1,18 @@
 use crate::cleanup::cleanup_run;
 use crate::event::write_event;
 use crate::model::{
-    MonitorResult, PreparedRun, RunState, RunnerControlRequest, RunnerControlResponse,
+    LaunchPlan, MonitorResult, PreparedRun, RunState, RunnerControlRequest, RunnerControlResponse,
     RunnerRuntime,
 };
 use crate::monitor::monitor_run;
 use crate::prepare::prepare_run;
 use serde_json::json;
 use sr_common::{ErrorItem, SR_RUN_001, SR_RUN_002};
+use std::env;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Default)]
@@ -49,6 +53,16 @@ impl Runner {
                 "timeoutSec": prepared.runtime_context.timeout_sec
             }),
         )?;
+
+        if let Err(err) = ensure_launch_binaries(&prepared.launch_plan) {
+            self.run_cleanup_on_failure(
+                prepared,
+                "launch.preflight",
+                err.code.clone(),
+                err.message.clone(),
+            );
+            return Err(err);
+        }
 
         let vm_pid = match self.spawn(&prepared.launch_plan.jailer) {
             Ok(pid) => pid,
@@ -179,4 +193,99 @@ fn persist_vm_pid(prepared: &mut PreparedRun, vm_pid: u32) -> Result<(), ErrorIt
             format!("failed to write vm pid artifact: {err}"),
         )
     })
+}
+
+fn ensure_launch_binaries(launch_plan: &LaunchPlan) -> Result<(), ErrorItem> {
+    ensure_runtime_binary(
+        &launch_plan.jailer.program,
+        "jailer",
+        "launch.preflight.jailer",
+    )?;
+    ensure_runtime_binary(
+        &launch_plan.firecracker.program,
+        "firecracker",
+        "launch.preflight.firecracker",
+    )?;
+    Ok(())
+}
+
+fn ensure_runtime_binary(binary: &str, label: &str, error_path: &str) -> Result<(), ErrorItem> {
+    let binary = binary.trim();
+    if binary.is_empty() {
+        return Err(preflight_error(
+            error_path,
+            format!("required {label} executable is empty"),
+        ));
+    }
+
+    let resolved = resolve_binary_path(binary).ok_or_else(|| {
+        preflight_error(
+            error_path,
+            format!(
+                "required {label} executable '{binary}' was not found; install it or add it to PATH"
+            ),
+        )
+    })?;
+
+    let metadata = fs::metadata(&resolved).map_err(|err| {
+        preflight_error(
+            error_path,
+            format!(
+                "failed to inspect {label} executable '{binary}' at '{}': {err}",
+                resolved.display()
+            ),
+        )
+    })?;
+
+    if !metadata.is_file() {
+        return Err(preflight_error(
+            error_path,
+            format!(
+                "{label} executable '{binary}' resolved to '{}' but it is not a file",
+                resolved.display()
+            ),
+        ));
+    }
+
+    if !is_executable(&metadata) {
+        return Err(preflight_error(
+            error_path,
+            format!(
+                "{label} executable '{binary}' resolved to '{}' but is not executable",
+                resolved.display()
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn preflight_error(path: &str, message: String) -> ErrorItem {
+    ErrorItem::new(SR_RUN_002, path, message)
+}
+
+fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
+    let binary_path = Path::new(binary);
+    if binary_path.is_absolute() || binary.contains(std::path::MAIN_SEPARATOR) {
+        return binary_path.exists().then(|| binary_path.to_path_buf());
+    }
+
+    let path_env = env::var_os("PATH")?;
+    for dir in env::split_paths(&path_env) {
+        let candidate = dir.join(binary);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &fs::Metadata) -> bool {
+    true
 }

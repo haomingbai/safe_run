@@ -40,12 +40,7 @@ pub fn derive_event_hash(event: &EvidenceEvent) -> String {
     let payload_json = serde_json::to_string(&event.payload).unwrap_or_default();
     let material = format!(
         "{}|{}|{}|{}|{}|{}",
-        event.hash_prev,
-        event.timestamp,
-        event.run_id,
-        event.stage,
-        event.event_type,
-        payload_json
+        event.hash_prev, event.timestamp, event.run_id, event.stage, event.event_type, payload_json
     );
     sha256_string(&material)
 }
@@ -63,9 +58,7 @@ fn canonicalize_value(value: &Value) -> Value {
             }
             Value::Object(new_map)
         }
-        Value::Array(items) => {
-            Value::Array(items.iter().map(canonicalize_value).collect())
-        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_value).collect()),
         _ => value.clone(),
     }
 }

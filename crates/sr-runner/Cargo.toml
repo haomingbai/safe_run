@@ -13,3 +13,4 @@ sr-evidence = { path = "../sr-evidence" }
 nix.workspace = true
 
 [dev-dependencies]
+sr-policy = { path = "../sr-policy" }

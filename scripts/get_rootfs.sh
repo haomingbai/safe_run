@@ -3,16 +3,54 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 ARTIFACTS_DIR="${ROOT_DIR}/artifacts"
+USE_LOCAL_PROXY="${SAFE_RUN_USE_LOCAL_PROXY:-1}"
+PROXY_URL="${SAFE_RUN_PROXY_URL:-http://127.0.0.1:7890}"
+HAS_PROXY_ENV=0
+if [[ -n "${HTTP_PROXY:-}" || -n "${HTTPS_PROXY:-}" || -n "${http_proxy:-}" || -n "${https_proxy:-}" ]]; then
+  HAS_PROXY_ENV=1
+fi
+
+curl_fetch() {
+  if [[ "${HAS_PROXY_ENV}" == "1" ]]; then
+    curl "$@"
+    return
+  fi
+
+  if [[ "${USE_LOCAL_PROXY}" == "1" ]]; then
+    if curl --proxy "${PROXY_URL}" "$@"; then
+      return
+    fi
+    echo "WARN: curl via proxy '${PROXY_URL}' failed, retrying without proxy." >&2
+  fi
+
+  curl "$@"
+}
+
+wget_fetch() {
+  if [[ "${HAS_PROXY_ENV}" == "1" ]]; then
+    wget "$@"
+    return
+  fi
+
+  if [[ "${USE_LOCAL_PROXY}" == "1" ]]; then
+    if wget -e use_proxy=yes -e "http_proxy=${PROXY_URL}" -e "https_proxy=${PROXY_URL}" "$@"; then
+      return
+    fi
+    echo "WARN: wget via proxy '${PROXY_URL}' failed, retrying without proxy." >&2
+  fi
+
+  wget "$@"
+}
 
 mkdir -p "${ARTIFACTS_DIR}"
 cd "${ARTIFACTS_DIR}"
 
 ARCH="$(uname -m)"
 RELEASE_URL="https://github.com/firecracker-microvm/firecracker/releases"
-LATEST_VERSION=$(basename "$(curl -fsSLI -o /dev/null -w %{url_effective} ${RELEASE_URL}/latest)")
+LATEST_VERSION=$(basename "$(curl_fetch -fsSLI -o /dev/null -w %{url_effective} ${RELEASE_URL}/latest)")
 CI_VERSION=${LATEST_VERSION%.*}
 
-LATEST_KERNEL_KEY=$(curl "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-&list-type=2" \
+LATEST_KERNEL_KEY=$(curl_fetch "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-&list-type=2" \
   | grep -oP "(?<=<Key>)(firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})(?=</Key>)" \
   | sort -V | tail -1)
 
@@ -24,9 +62,9 @@ fi
 KERNEL_URL="https://s3.amazonaws.com/spec.ccfc.min/${LATEST_KERNEL_KEY}"
 
 echo "Downloading kernel: ${KERNEL_URL}"
-wget -q -O vmlinux "${KERNEL_URL}"
+wget_fetch -q -O vmlinux "${KERNEL_URL}"
 
-LATEST_UBUNTU_KEY=$(curl "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/ubuntu-&list-type=2" \
+LATEST_UBUNTU_KEY=$(curl_fetch "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/ubuntu-&list-type=2" \
   | grep -oP "(?<=<Key>)(firecracker-ci/${CI_VERSION}/${ARCH}/ubuntu-[0-9]+\.[0-9]+\.squashfs)(?=</Key>)" \
   | sort -V | tail -1)
 
@@ -70,7 +108,7 @@ run_root_cmd() {
 }
 
 echo "Downloading rootfs: ${ROOTFS_URL}"
-wget -q -O "${ROOTFS_SQUASHFS}" "${ROOTFS_URL}"
+wget_fetch -q -O "${ROOTFS_SQUASHFS}" "${ROOTFS_URL}"
 
 rm -rf squashfs-root
 unsquashfs "${ROOTFS_SQUASHFS}"

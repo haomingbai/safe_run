@@ -1,4 +1,4 @@
-use crate::constants::FIRECRACKER_CONFIG_FILE;
+use crate::constants::{ARTIFACTS_DIR, FIRECRACKER_API_SOCKET_FILE, FIRECRACKER_CONFIG_FILE};
 use crate::model::{CommandSpec, LaunchPlan, RunnerRuntime};
 use sr_compiler::CompileBundle;
 use std::path::Path;
@@ -10,7 +10,14 @@ pub(crate) fn assemble_launch_plan(
     compile_bundle: &CompileBundle,
     runtime: &RunnerRuntime,
 ) -> LaunchPlan {
+    let api_socket_path = workdir
+        .join(ARTIFACTS_DIR)
+        .join(FIRECRACKER_API_SOCKET_FILE)
+        .to_string_lossy()
+        .to_string();
     let firecracker_args = vec![
+        "--api-sock".to_string(),
+        api_socket_path,
         "--config-file".to_string(),
         workdir
             .join(FIRECRACKER_CONFIG_FILE)

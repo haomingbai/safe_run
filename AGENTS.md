@@ -33,6 +33,18 @@
 - M3：才允许 `network.mode=allowlist` 与 `networkPlan` 实际生效。
 - M4：以交付、验证、归档为主，不新增高风险底层能力。
 
+## M0/M1 验收经验沉淀（影响后续任务，强制遵守）
+
+- M0 语义仍需保持：`safe-run compile` 仅允许 `--dry-run`；若改动 CLI 或测试，不得破坏该约束。
+- `PolicySpec` 的 `runtime.args` 与 `mounts` 必须显式存在（可为空数组但不可缺失）；新增样例或文档时不得省略。
+- M0-M2 期间，`network.mode` 只允许 `none`，且 `CompileBundle.networkPlan` 必须保持 `null`。
+- M1 真实运行前必须进行运行时二进制预检（`jailer`/`firecracker`）；缺失时应返回 `SR-RUN-002` 且错误路径明确。
+- M1 启动 Firecracker 必须使用显式 `--api-sock <writable_path>`；禁止回退到不可写默认路径（如 `/run/firecracker.socket`）。
+- 在受限沙箱中执行 `safe-run run` 可能出现 `Operation not permitted`；验收记录必须注明运行环境（沙箱内/外）。
+- 当 `jailer`/`firecracker` 缺失时，AGENTS 必须优先执行 `./scripts/get_firecracker.sh` 下载本地二进制，不得要求先通过系统包管理器安装。
+- AGENTS 执行真实 `run` 前，必须优先使用仓库本地二进制：`export PATH="$(pwd)/artifacts/bin:$PATH"`。
+- 下载脚本默认优先使用本地代理 `http://127.0.0.1:7890`；如需调整必须使用 `SAFE_RUN_PROXY_URL`/`SAFE_RUN_USE_LOCAL_PROXY`，不得在脚本中写死其他地址。
+
 ## 接口与兼容性硬约束
 
 - 必须遵循接口基线：`I-PL-001`、`I-VA-001`、`I-CP-001`、`I-RN-001`、`I-EV-001`、`I-RP-001`、`I-VF-001`。
