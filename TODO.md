@@ -59,27 +59,27 @@
 
 ## Stage 1：接口对齐与错误码脚手架（测试先行）
 
-- [ ] M2-S1-T001（先测试）sr-policy：解析 `hostPath/guestPath/readOnly` 样例成功并规范化到内部结构。
-- [ ] M2-S1-T002（先测试）sr-policy：新增无效用例覆盖 `hostPath/source` 为空、`guestPath/target` 非绝对路径。
-- [ ] M2-S1-I001（实现）sr-policy::Mount 增加 serde alias：`hostPath->source`、`guestPath->target`、`readOnly->read_only`（additive）。
-- [ ] M2-S1-I002（实现）sr-common 增加错误码常量：`SR_POL_101/102/103`、`SR_RUN_101`（按 plan/M2/INTERFACES.md）。
+- [x] M2-S1-T001（先测试）sr-policy：解析 `hostPath/guestPath/readOnly` 样例成功并规范化到内部结构。
+- [x] M2-S1-T002（先测试）sr-policy：新增无效用例覆盖 `hostPath/source` 为空、`guestPath/target` 非绝对路径。
+- [x] M2-S1-I001（实现）sr-policy::Mount 增加 serde alias：`hostPath->source`、`guestPath->target`、`readOnly->read_only`（additive）。
+- [x] M2-S1-I002（实现）sr-common 增加错误码常量：`SR_POL_101/102/103`、`SR_RUN_101`（按 plan/M2/INTERFACES.md）。
 
 ### Stage 1 验收标准
 
-- [ ] M2-S1-A001 `cargo test -p sr-policy`
-- [ ] M2-S1-A002 `cargo test -p sr-common`（如该 crate 有测试）
+- [x] M2-S1-A001 `cargo test -p sr-policy`
+- [x] M2-S1-A002 `cargo test -p sr-common`（如该 crate 有测试）
 
 ## Stage 2：PathSecurityEngine（canonicalize + 白名单前缀）
 
-- [ ] M2-S2-T001（先测试）临时目录下 allowlisted 路径通过。
-- [ ] M2-S2-T002（先测试）allowlisted 目录内 symlink 指向非白名单目录时拒绝。
-- [ ] M2-S2-T003（先测试）`..` 穿越 canonicalize 后落到白名单外时拒绝。
-- [ ] M2-S2-I001（实现）新增 `PathSecurityEngine`（crates/sr-policy/src/path_security.rs）。
-- [ ] M2-S2-I002（实现）在 `validate_policy()` 中调用；失败映射 `SR-POL-101`。
+- [x] M2-S2-T001（先测试）临时目录下 allowlisted 路径通过。
+- [x] M2-S2-T002（先测试）allowlisted 目录内 symlink 指向非白名单目录时拒绝。
+- [x] M2-S2-T003（先测试）`..` 穿越 canonicalize 后落到白名单外时拒绝。
+- [x] M2-S2-I001（实现）新增 `PathSecurityEngine`（crates/sr-policy/src/path_security.rs）。
+- [x] M2-S2-I002（实现）在 `validate_policy()` 中调用；失败映射 `SR-POL-101`。
 
 ### Stage 2 验收标准
 
-- [ ] M2-S2-A001 `cargo test -p sr-policy`
+- [x] M2-S2-A001 `cargo test -p sr-policy`
 
 ## Stage 3：MountConstraints（敏感宿主路径 + guestPath 命名空间）
 

@@ -75,3 +75,41 @@ fn missing_mounts_returns_sr_pol_001() {
         .expect_err("missing mounts should fail on parse");
     assert_eq!(err.code, SR_POL_001);
 }
+
+#[test]
+fn mount_alias_fields_are_normalized() {
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_valid_cases/mount_alias.yaml",
+    ))
+    .expect("load alias policy");
+    let result = validate_policy(policy);
+    assert!(result.valid);
+    let normalized = result.normalized_policy.expect("normalized policy");
+    assert_eq!(normalized.mounts.len(), 1);
+    let mount = &normalized.mounts[0];
+    assert_eq!(mount.source, "/var/lib/safe-run/input");
+    assert_eq!(mount.target, "/data/input");
+    assert!(mount.read_only);
+}
+
+#[test]
+fn invalid_mount_source_empty_returns_sr_pol_002() {
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/invalid_mount_source_empty.yaml",
+    ))
+    .expect("load invalid mount source policy");
+    let result = validate_policy(policy);
+    assert!(!result.valid);
+    assert!(result.errors.iter().any(|e| e.code == SR_POL_002));
+}
+
+#[test]
+fn invalid_mount_target_not_absolute_returns_sr_pol_002() {
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/invalid_mount_target_not_absolute.yaml",
+    ))
+    .expect("load invalid mount target policy");
+    let result = validate_policy(policy);
+    assert!(!result.valid);
+    assert!(result.errors.iter().any(|e| e.code == SR_POL_002));
+}

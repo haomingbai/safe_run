@@ -31,10 +31,14 @@ pub enum CliError {
 pub const SR_POL_001: &str = "SR-POL-001";
 pub const SR_POL_002: &str = "SR-POL-002";
 pub const SR_POL_003: &str = "SR-POL-003";
+pub const SR_POL_101: &str = "SR-POL-101";
+pub const SR_POL_102: &str = "SR-POL-102";
+pub const SR_POL_103: &str = "SR-POL-103";
 pub const SR_CMP_001: &str = "SR-CMP-001";
 pub const SR_CMP_002: &str = "SR-CMP-002";
 pub const SR_RUN_001: &str = "SR-RUN-001";
 pub const SR_RUN_002: &str = "SR-RUN-002";
 pub const SR_RUN_003: &str = "SR-RUN-003";
+pub const SR_RUN_101: &str = "SR-RUN-101";
 pub const SR_EVD_001: &str = "SR-EVD-001";
 pub const SR_EVD_002: &str = "SR-EVD-002";

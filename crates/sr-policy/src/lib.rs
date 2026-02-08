@@ -2,6 +2,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sr_common::{ErrorItem, SR_POL_001, SR_POL_002, SR_POL_003};
 
+mod path_security;
+use path_security::PathSecurityEngine;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicySpec {
     #[serde(rename = "apiVersion")]
@@ -55,9 +58,11 @@ pub enum NetworkMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mount {
+    #[serde(alias = "hostPath")]
     pub source: String,
+    #[serde(alias = "guestPath")]
     pub target: String,
-    #[serde(default)]
+    #[serde(default, alias = "readOnly")]
     pub read_only: bool,
 }
 
@@ -98,9 +103,24 @@ pub fn load_policy_from_path(path: &str) -> Result<PolicySpec, ErrorItem> {
     parse_policy(&text)
 }
 
-pub fn validate_policy(mut policy: PolicySpec) -> ValidationResult {
+pub fn validate_policy(policy: PolicySpec) -> ValidationResult {
+    validate_policy_with_allowlist(policy, None)
+}
+
+pub fn validate_policy_with_allowlist(
+    mut policy: PolicySpec,
+    allowlist_path: Option<&str>,
+) -> ValidationResult {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+
+    let allowlist_engine = match PathSecurityEngine::from_sources(allowlist_path) {
+        Ok(engine) => Some(engine),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
 
     if policy.api_version != "policy.safe-run.dev/v1alpha1" {
         errors.push(ErrorItem::new(
@@ -166,6 +186,13 @@ pub fn validate_policy(mut policy: PolicySpec) -> ValidationResult {
                 format!("mounts[{idx}].target"),
                 "mount target must be an absolute path",
             ));
+        }
+        if let Some(engine) = allowlist_engine.as_ref() {
+            if !mount.source.trim().is_empty() {
+                if let Err(err) = engine.validate_source_path(&mount.source, idx) {
+                    errors.push(err);
+                }
+            }
         }
     }
 
