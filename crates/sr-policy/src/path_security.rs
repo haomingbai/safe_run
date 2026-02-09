@@ -24,6 +24,7 @@ struct MountAllowlistConfig {
 }
 
 impl MountAllowlist {
+    /// Built-in allowlist used when CLI/env does not provide an external file.
     pub fn default_allowlist() -> Self {
         Self {
             host_allow_prefixes: DEFAULT_HOST_ALLOW_PREFIXES
@@ -37,24 +38,23 @@ impl MountAllowlist {
         }
     }
 
+    /// Load and validate allowlist YAML config from file.
+    /// Error mapping: malformed or unreadable config -> `SR-POL-101`.
     pub fn from_file(path: &Path) -> Result<Self, ErrorItem> {
         let raw = std::fs::read_to_string(path).map_err(|err| {
-            ErrorItem::new(
-                SR_POL_101,
-                "mountAllowlist",
+            pol101(
+                "mountAllowlist.file",
                 format!("failed to read allowlist file '{}': {err}", path.display()),
             )
         })?;
         let config: MountAllowlistConfig = serde_yaml::from_str(&raw).map_err(|err| {
-            ErrorItem::new(
-                SR_POL_101,
-                "mountAllowlist",
+            pol101(
+                "mountAllowlist.file",
                 format!("failed to parse allowlist file '{}': {err}", path.display()),
             )
         })?;
         if config.schema_version != ALLOWLIST_SCHEMA_VERSION {
-            return Err(ErrorItem::new(
-                SR_POL_101,
+            return Err(pol101(
                 "mountAllowlist.schemaVersion",
                 format!(
                     "allowlist schemaVersion must be '{}'",
@@ -82,6 +82,7 @@ pub struct PathSecurityEngine {
 }
 
 impl PathSecurityEngine {
+    /// Resolve allowlist source by priority: CLI arg > env var > built-in default.
     pub fn from_sources(explicit_path: Option<&str>) -> Result<Self, ErrorItem> {
         let allowlist = if let Some(path) = explicit_path {
             MountAllowlist::from_file(Path::new(path))?
@@ -98,32 +99,26 @@ impl PathSecurityEngine {
         Ok(Self { allowlist })
     }
 
-    pub fn validate_source_path(&self, source: &str, idx: usize) -> Result<(), ErrorItem> {
+    /// Canonicalize and verify mount source path against host allowlist prefixes.
+    /// Error mapping: policy source violations -> `SR-POL-101` with `mounts[i].source`.
+    pub fn validate_source_path(&self, source: &str, idx: usize) -> Result<PathBuf, ErrorItem> {
         let source_path = Path::new(source);
-        let canonical = match std::fs::canonicalize(source_path) {
-            Ok(path) => path,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                normalize_path_lexically(source_path)
-            }
-            Err(err) => {
-                return Err(ErrorItem::new(
-                    SR_POL_101,
-                    format!("mounts[{idx}].source"),
-                    format!(
-                        "failed to canonicalize mount source '{}': {err}",
-                        source_path.display()
-                    ),
-                ));
-            }
-        };
+        let canonical = canonicalize_mount_source(source_path).map_err(|err| {
+            pol101(
+                format!("mounts[{idx}].source"),
+                format!(
+                    "failed to canonicalize mount source '{}': {err}",
+                    source_path.display()
+                ),
+            )
+        })?;
         if !self
             .allowlist
             .host_allow_prefixes
             .iter()
             .any(|prefix| canonical.starts_with(prefix))
         {
-            return Err(ErrorItem::new(
-                SR_POL_101,
+            return Err(pol101(
                 format!("mounts[{idx}].source"),
                 format!(
                     "mount source '{}' is outside host allowlist",
@@ -131,7 +126,11 @@ impl PathSecurityEngine {
                 ),
             ));
         }
-        Ok(())
+        Ok(canonical)
+    }
+
+    pub fn guest_allow_prefixes(&self) -> &[PathBuf] {
+        &self.allowlist.guest_allow_prefixes
     }
 }
 
@@ -140,16 +139,11 @@ fn parse_prefixes(prefixes: &[String], path_label: &str) -> Result<Vec<PathBuf>,
     for prefix in prefixes {
         let trimmed = prefix.trim();
         if trimmed.is_empty() {
-            return Err(ErrorItem::new(
-                SR_POL_101,
-                path_label,
-                "allowlist prefix cannot be empty",
-            ));
+            return Err(pol101(path_label, "allowlist prefix cannot be empty"));
         }
         let path = PathBuf::from(trimmed);
         if !path.is_absolute() {
-            return Err(ErrorItem::new(
-                SR_POL_101,
+            return Err(pol101(
                 path_label,
                 format!("allowlist prefix must be absolute: {trimmed}"),
             ));
@@ -157,6 +151,16 @@ fn parse_prefixes(prefixes: &[String], path_label: &str) -> Result<Vec<PathBuf>,
         parsed.push(path);
     }
     Ok(parsed)
+}
+
+pub(crate) fn canonicalize_mount_source(path: &Path) -> Result<PathBuf, std::io::Error> {
+    match std::fs::canonicalize(path) {
+        Ok(resolved) => Ok(resolved),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(normalize_path_lexically(path))
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn normalize_path_lexically(path: &Path) -> PathBuf {
@@ -173,4 +177,8 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+fn pol101(path: impl Into<String>, message: impl Into<String>) -> ErrorItem {
+    ErrorItem::new(SR_POL_101, path, message)
 }

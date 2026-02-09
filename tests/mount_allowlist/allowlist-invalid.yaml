@@ -1,0 +1,5 @@
+schemaVersion: safe-run.mount-allowlist/v0
+hostAllowPrefixes:
+  - /var/lib/safe-run
+guestAllowPrefixes:
+  - /data

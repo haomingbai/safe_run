@@ -54,3 +54,28 @@ mounts:
 - `SR-POL-102`：挂载目标路径非法
 - `SR-POL-103`：挂载策略组合冲突
 - `SR-RUN-101`：挂载应用失败
+
+## 5. I-CP-001 CompileBundle additive 字段（M2）
+
+`CompileBundle` 新增 `mountPlan` 字段（additive），用于表达有序挂载计划：
+
+```json
+{
+  "mountPlan": {
+    "enabled": true,
+    "mounts": [
+      {
+        "source": "/var/lib/safe-run/input",
+        "target": "/data/input",
+        "read_only": true
+      }
+    ]
+  }
+}
+```
+
+约束：
+
+- `mounts[]` 顺序即执行顺序。
+- 仅携带 `source`/`target`/`read_only`。
+- `PolicySpec.mounts` 为空时，`mountPlan.mounts` 必须为空数组。

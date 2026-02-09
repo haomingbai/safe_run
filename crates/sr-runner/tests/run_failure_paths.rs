@@ -6,6 +6,7 @@ use common::{
 };
 use serde_json::json;
 use sr_common::{SR_RUN_001, SR_RUN_002, SR_RUN_003};
+use sr_evidence::{EVENT_RUN_FAILED, EVENT_VM_EXITED};
 use sr_runner::{RunState, Runner, RunnerControlRequest, RunnerRuntime};
 use std::fs;
 
@@ -32,7 +33,9 @@ fn launch_failure_returns_sr_run_002() {
 
     assert_eq!(err.code, SR_RUN_002);
     assert_eq!(prepared.state, RunState::Failed);
-    assert!(events.iter().any(|event| event.event_type == "run.failed"));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_RUN_FAILED));
     remove_temp_dir(&workdir);
 }
 
@@ -107,8 +110,8 @@ fn prepare_copies_absolute_artifacts_into_workdir() {
     };
 
     let prepared = runner.prepare(request).expect("prepare should succeed");
-    let config_raw = fs::read_to_string(prepared.firecracker_config_path())
-        .expect("read firecracker config");
+    let config_raw =
+        fs::read_to_string(prepared.firecracker_config_path()).expect("read firecracker config");
     let config_json: serde_json::Value =
         serde_json::from_str(&config_raw).expect("parse firecracker config");
     let kernel_path = config_json
@@ -153,7 +156,9 @@ fn preflight_failure_on_missing_firecracker_returns_sr_run_002() {
     assert_eq!(err.code, SR_RUN_002);
     assert_eq!(err.path, "launch.preflight.firecracker");
     assert_eq!(prepared.state, RunState::Failed);
-    assert!(events.iter().any(|event| event.event_type == "run.failed"));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_RUN_FAILED));
     remove_temp_dir(&workdir);
 }
 
@@ -184,8 +189,12 @@ fn timeout_path_returns_sr_run_003() {
 
     assert_eq!(err.code, SR_RUN_003);
     assert_eq!(prepared.state, RunState::Failed);
-    assert!(events.iter().any(|event| event.event_type == "vm.exited"));
-    assert!(events.iter().any(|event| event.event_type == "run.failed"));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_VM_EXITED));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_RUN_FAILED));
     remove_temp_dir(&workdir);
 }
 
@@ -217,10 +226,12 @@ fn abnormal_exit_is_recorded_with_non_zero_exit_code() {
     assert_eq!(monitor_result.exit_code, 17);
     assert!(!monitor_result.timed_out);
     assert_eq!(prepared.state, RunState::Failed);
-    assert!(events.iter().any(|event| event.event_type == "vm.exited"));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_VM_EXITED));
     let failed_event = events
         .iter()
-        .find(|event| event.event_type == "run.failed")
+        .find(|event| event.event_type == EVENT_RUN_FAILED)
         .expect("non-zero exit must emit run.failed");
     assert_eq!(
         failed_event

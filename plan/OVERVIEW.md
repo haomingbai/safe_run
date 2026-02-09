@@ -86,4 +86,5 @@
 ## 6. 文档索引
 
 - 全局：`plan/OVERVIEW.md`、`plan/INTERFACE_BASELINE.md`
+- 工程规范：`plan/ENGINEERING_CONVENTIONS.md`
 - 阶段：`plan/M0-M4/OVERVIEW.md` + 各阶段详细设计文档

@@ -28,12 +28,19 @@
       "set_memory_max=256Mi"
     ]
   },
+  "mountPlan": {
+    "enabled": true,
+    "mounts": []
+  },
   "networkPlan": null,
   "evidencePlan": {
     "enabled": true,
     "events": [
       "compile",
       "run.prepared",
+      "mount.validated",
+      "mount.rejected",
+      "mount.applied",
       "vm.started",
       "resource.sampled",
       "vm.exited",

@@ -1,0 +1,19 @@
+apiVersion: policy.safe-run.dev/v1alpha1
+metadata:
+  name: allowlist-fail
+runtime:
+  command: /bin/echo
+  args: ["ok"]
+resources:
+  cpu:
+    max: "100000 100000"
+  memory:
+    max: 256Mi
+network:
+  mode: none
+mounts:
+  - source: /etc
+    target: /data/etc
+    read_only: true
+audit:
+  level: basic

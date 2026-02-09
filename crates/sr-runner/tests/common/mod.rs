@@ -3,8 +3,9 @@
 use serde_json::json;
 use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
-    build_report, compute_artifact_hashes_from_json, compute_integrity_digest, ArtifactJsonInputs,
-    EvidenceEvent, PolicySummary, ResourceUsage, RunReport,
+    build_report, compute_artifact_hashes_from_json, compute_integrity_digest, event_time_range,
+    mount_audit_from_events, resource_usage_from_events, ArtifactJsonInputs, EvidenceEvent,
+    PolicySummary, RunReport,
 };
 use sr_policy::{
     validate_policy, Audit, Cpu, Memory, Metadata, Network, NetworkMode, PolicySpec, Resources,
@@ -117,7 +118,8 @@ pub fn build_report_from_events(
 ) -> RunReport {
     let artifacts = report_artifacts(workdir, policy, compile_bundle);
     let (started_at, finished_at) = event_time_range(events);
-    let resource_usage = resource_usage(events);
+    let resource_usage = resource_usage_from_events(events);
+    let mount_audit = mount_audit_from_events(events);
     let mut report = build_report(
         run_id.to_string(),
         started_at,
@@ -130,6 +132,7 @@ pub fn build_report_from_events(
         },
         resource_usage,
         events.to_vec(),
+        mount_audit,
         String::new(),
     );
     report.integrity.digest = compute_integrity_digest(&report).expect("compute report digest");
@@ -215,52 +218,4 @@ fn resolve_path(workdir: &Path, raw: &str) -> PathBuf {
     } else {
         workdir.join(path)
     }
-}
-
-fn event_time_range(events: &[EvidenceEvent]) -> (String, String) {
-    if events.is_empty() {
-        let fallback = unix_timestamp();
-        return (fallback.clone(), fallback);
-    }
-    let started_at = events
-        .first()
-        .map(|event| event.timestamp.clone())
-        .unwrap_or_else(unix_timestamp);
-    let finished_at = events
-        .last()
-        .map(|event| event.timestamp.clone())
-        .unwrap_or_else(unix_timestamp);
-    (started_at, finished_at)
-}
-
-fn resource_usage(events: &[EvidenceEvent]) -> ResourceUsage {
-    for event in events.iter().rev() {
-        if event.event_type != "resource.sampled" {
-            continue;
-        }
-        let cpu = event
-            .payload
-            .get("cpuUsageUsec")
-            .and_then(|value| value.as_u64())
-            .map(|value| format!("cpuUsageUsec={value}"))
-            .unwrap_or_else(|| "cpuUsageUsec=0".to_string());
-        let memory = event
-            .payload
-            .get("memoryCurrentBytes")
-            .and_then(|value| value.as_u64())
-            .map(|value| format!("memoryCurrentBytes={value}"))
-            .unwrap_or_else(|| "memoryCurrentBytes=0".to_string());
-        return ResourceUsage { cpu, memory };
-    }
-    ResourceUsage {
-        cpu: "cpuUsageUsec=0".to_string(),
-        memory: "memoryCurrentBytes=0".to_string(),
-    }
-}
-
-fn unix_timestamp() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("unix:{}.{:09}", now.as_secs(), now.subsec_nanos())
 }

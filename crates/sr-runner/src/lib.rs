@@ -4,7 +4,9 @@ mod event;
 mod launch;
 mod model;
 mod monitor;
+mod mount_executor;
 mod prepare;
+mod rollback;
 mod runner;
 mod utils;
 
@@ -17,13 +19,20 @@ pub use runner::Runner;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{
+        EVENT_COMPILE, EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED,
+        EVENT_RESOURCE_SAMPLED, EVENT_RUN_CLEANED, EVENT_RUN_FAILED, EVENT_RUN_PREPARED,
+        EVENT_VM_EXITED, EVENT_VM_STARTED, STAGE_LAUNCH, STAGE_MOUNT,
+    };
+    use crate::mount_executor::{MountApplier, MountExecutor, MountRollbacker};
     use serde_json::json;
-    use sr_common::{SR_RUN_001, SR_RUN_002, SR_RUN_003};
-    use sr_compiler::{CompileBundle, EvidencePlan, Plan};
+    use sr_common::{SR_RUN_001, SR_RUN_002, SR_RUN_003, SR_RUN_101};
+    use sr_compiler::{CompileBundle, EvidencePlan, MountPlan, MountPlanEntry, Plan};
     use sr_evidence::EvidenceEvent;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
 
     static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -52,14 +61,21 @@ mod tests {
                 enabled: true,
                 ops: vec!["set_cpu_max=100000 100000".to_string()],
             },
+            mount_plan: MountPlan {
+                enabled: true,
+                mounts: vec![],
+            },
             network_plan: None,
             evidence_plan: EvidencePlan {
                 enabled: true,
                 events: vec![
-                    "compile".to_string(),
-                    "run.prepared".to_string(),
-                    "vm.started".to_string(),
-                    "run.failed".to_string(),
+                    EVENT_COMPILE.to_string(),
+                    EVENT_RUN_PREPARED.to_string(),
+                    EVENT_MOUNT_VALIDATED.to_string(),
+                    EVENT_MOUNT_REJECTED.to_string(),
+                    EVENT_MOUNT_APPLIED.to_string(),
+                    EVENT_VM_STARTED.to_string(),
+                    EVENT_RUN_FAILED.to_string(),
                 ],
             },
         }
@@ -70,6 +86,16 @@ mod tests {
             jailer_bin: "/bin/true".to_string(),
             firecracker_bin: "/bin/true".to_string(),
         })
+    }
+
+    fn runner_with_mount_executor(executor: MountExecutor) -> Runner {
+        Runner::with_mount_executor(
+            RunnerRuntime {
+                jailer_bin: "/bin/true".to_string(),
+                firecracker_bin: "/bin/true".to_string(),
+            },
+            executor,
+        )
     }
 
     fn new_temp_run_dir(label: &str) -> PathBuf {
@@ -92,6 +118,62 @@ mod tests {
         }
     }
 
+    fn sample_request_with_mounts(
+        workdir: &Path,
+        mounts: Vec<MountPlanEntry>,
+    ) -> RunnerControlRequest {
+        let mut bundle = sample_compile_bundle();
+        bundle.mount_plan = MountPlan {
+            enabled: true,
+            mounts,
+        };
+        RunnerControlRequest {
+            compile_bundle: bundle,
+            runtime_context: RuntimeContext {
+                workdir: workdir.to_string_lossy().to_string(),
+                timeout_sec: 300,
+                sample_interval_ms: None,
+                cgroup_path: None,
+            },
+        }
+    }
+
+    #[derive(Clone)]
+    struct RecordingApplier {
+        calls: Arc<Mutex<Vec<String>>>,
+        fail_on: Option<String>,
+    }
+
+    impl MountApplier for RecordingApplier {
+        fn apply(&self, entry: &MountPlanEntry) -> Result<(), String> {
+            self.calls
+                .lock()
+                .expect("lock calls")
+                .push(entry.target.clone());
+            if let Some(target) = &self.fail_on {
+                if &entry.target == target {
+                    return Err("apply failed".to_string());
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct RecordingRollbacker {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl MountRollbacker for RecordingRollbacker {
+        fn rollback(&self, entry: &MountPlanEntry) -> Result<(), String> {
+            self.calls
+                .lock()
+                .expect("lock rollback calls")
+                .push(entry.target.clone());
+            Ok(())
+        }
+    }
+
     fn set_mock_cgroup(cgroup_dir: &Path, cpu_usage_usec: u64, memory_current: u64) {
         fs::create_dir_all(cgroup_dir).expect("create mock cgroup dir");
         fs::write(
@@ -109,10 +191,8 @@ mod tests {
     fn write_mock_vm_artifacts(workdir: &Path) {
         let artifacts_dir = workdir.join("artifacts");
         fs::create_dir_all(&artifacts_dir).expect("create artifacts dir");
-        fs::write(artifacts_dir.join("vmlinux"), b"kernel-image")
-            .expect("write mock kernel");
-        fs::write(artifacts_dir.join("rootfs.ext4"), b"rootfs-image")
-            .expect("write mock rootfs");
+        fs::write(artifacts_dir.join("vmlinux"), b"kernel-image").expect("write mock kernel");
+        fs::write(artifacts_dir.join("rootfs.ext4"), b"rootfs-image").expect("write mock rootfs");
     }
 
     fn override_launch_to_sleep(prepared: &mut PreparedRun, sleep_seconds: &str) {
@@ -260,10 +340,119 @@ mod tests {
             serde_json::from_str(lines[1]).expect("parse run.prepared event");
         let started_event: EvidenceEvent =
             serde_json::from_str(lines[2]).expect("parse vm.started event");
-        assert_eq!(compile_event.event_type, "compile");
-        assert_eq!(prepared_event.event_type, "run.prepared");
-        assert_eq!(started_event.event_type, "vm.started");
-        assert_eq!(started_event.stage, "launch");
+        assert_eq!(compile_event.event_type, EVENT_COMPILE);
+        assert_eq!(prepared_event.event_type, EVENT_RUN_PREPARED);
+        assert_eq!(started_event.event_type, EVENT_VM_STARTED);
+        assert_eq!(started_event.stage, STAGE_LAUNCH);
+
+        let _ = fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn launch_writes_mount_events_when_enabled() {
+        let run_dir = new_temp_run_dir("mount-events");
+        write_mock_vm_artifacts(&run_dir);
+        let apply_calls = Arc::new(Mutex::new(Vec::new()));
+        let rollback_calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = MountExecutor::new(
+            RecordingApplier {
+                calls: apply_calls.clone(),
+                fail_on: None,
+            },
+            RecordingRollbacker {
+                calls: rollback_calls.clone(),
+            },
+        );
+        let runner = runner_with_mount_executor(executor);
+        let mounts = vec![
+            MountPlanEntry {
+                source: "/var/lib/safe-run/input".to_string(),
+                target: "/data/input".to_string(),
+                read_only: true,
+            },
+            MountPlanEntry {
+                source: "/var/lib/safe-run/output".to_string(),
+                target: "/data/output".to_string(),
+                read_only: true,
+            },
+        ];
+        let mut prepared = runner
+            .prepare(sample_request_with_mounts(&run_dir, mounts))
+            .expect("prepare should succeed");
+
+        runner.launch(&mut prepared).expect("launch should succeed");
+
+        let events_raw =
+            std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
+        let events: Vec<EvidenceEvent> = events_raw
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("parse event"))
+            .collect();
+
+        let validated = events
+            .iter()
+            .filter(|event| event.event_type == EVENT_MOUNT_VALIDATED)
+            .count();
+        let applied = events
+            .iter()
+            .filter(|event| event.event_type == EVENT_MOUNT_APPLIED)
+            .count();
+        assert_eq!(validated, 2);
+        assert_eq!(applied, 2);
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == EVENT_MOUNT_VALIDATED && event.stage == STAGE_MOUNT));
+        assert!(rollback_calls
+            .lock()
+            .expect("lock rollback calls")
+            .is_empty());
+
+        let _ = fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn launch_mount_failure_records_rejection_and_rolls_back() {
+        let run_dir = new_temp_run_dir("mount-failure");
+        write_mock_vm_artifacts(&run_dir);
+        let apply_calls = Arc::new(Mutex::new(Vec::new()));
+        let rollback_calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = MountExecutor::new(
+            RecordingApplier {
+                calls: apply_calls.clone(),
+                fail_on: Some("/data/output".to_string()),
+            },
+            RecordingRollbacker {
+                calls: rollback_calls.clone(),
+            },
+        );
+        let runner = runner_with_mount_executor(executor);
+        let mounts = vec![
+            MountPlanEntry {
+                source: "/var/lib/safe-run/input".to_string(),
+                target: "/data/input".to_string(),
+                read_only: true,
+            },
+            MountPlanEntry {
+                source: "/var/lib/safe-run/output".to_string(),
+                target: "/data/output".to_string(),
+                read_only: true,
+            },
+        ];
+        let mut prepared = runner
+            .prepare(sample_request_with_mounts(&run_dir, mounts))
+            .expect("prepare should succeed");
+
+        let err = runner.launch(&mut prepared).expect_err("launch must fail");
+        assert_eq!(err.code, SR_RUN_101);
+
+        let rollback = rollback_calls.lock().expect("lock rollback calls");
+        assert_eq!(rollback.as_slice(), &["/data/input".to_string()]);
+
+        let events_raw =
+            std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_MOUNT_REJECTED}\"")));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_FAILED}\"")));
 
         let _ = fs::remove_dir_all(&run_dir);
     }
@@ -287,8 +476,8 @@ mod tests {
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
-        assert!(events_raw.contains("\"type\":\"run.prepared\""));
-        assert!(events_raw.contains("\"type\":\"run.failed\""));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_PREPARED}\"")));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_FAILED}\"")));
 
         let _ = fs::remove_dir_all(&run_dir);
     }
@@ -313,7 +502,7 @@ mod tests {
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
-        assert!(events_raw.contains("\"type\":\"run.failed\""));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_FAILED}\"")));
         assert!(events_raw.contains("launch.preflight"));
 
         let _ = fs::remove_dir_all(&run_dir);
@@ -346,8 +535,8 @@ mod tests {
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
-        assert!(events_raw.contains("\"type\":\"resource.sampled\""));
-        assert!(events_raw.contains("\"type\":\"vm.exited\""));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RESOURCE_SAMPLED}\"")));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_VM_EXITED}\"")));
 
         let _ = fs::remove_dir_all(&run_dir);
     }
@@ -377,9 +566,9 @@ mod tests {
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
-        assert!(events_raw.contains("\"type\":\"resource.sampled\""));
-        assert!(events_raw.contains("\"type\":\"vm.exited\""));
-        assert!(events_raw.contains("\"type\":\"run.failed\""));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RESOURCE_SAMPLED}\"")));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_VM_EXITED}\"")));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_FAILED}\"")));
 
         let _ = fs::remove_dir_all(&run_dir);
     }
@@ -414,7 +603,7 @@ mod tests {
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
-        assert!(events_raw.contains("\"type\":\"run.cleaned\""));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_CLEANED}\"")));
         assert_eq!(prepared.state, RunState::Finished);
 
         let _ = fs::remove_dir_all(&run_dir);
@@ -452,7 +641,7 @@ mod tests {
 
         let events_raw =
             std::fs::read_to_string(prepared.event_log_path()).expect("read event stream");
-        assert!(events_raw.contains("\"type\":\"run.failed\""));
+        assert!(events_raw.contains(&format!("\"type\":\"{EVENT_RUN_FAILED}\"")));
         assert!(events_raw.contains(&format!("\"errorCode\":\"{SR_RUN_001}\"")));
 
         let _ = fs::remove_dir_all(&run_dir);

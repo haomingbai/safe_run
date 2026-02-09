@@ -1,20 +1,20 @@
-# Safe-Run Suite (M1)
+# Safe-Run Suite (M0-M2)
 
-M1 目标：完成最小执行闭环 `Policy -> Validate -> Compile -> Run -> Report`，默认无网络。
+M0-M2 目标：在最小执行闭环 `Policy -> Validate -> Compile -> Run -> Report` 上，完成挂载与路径安全强化，且默认无网络。
 
 ## 工程结构
 
 - `crates/sr-common`: 共享错误项与错误码常量
 - `crates/sr-policy`: `PolicySpec` 解析与 `ValidationResult` 校验
-- `crates/sr-compiler`: `CompileBundle` 生成（M1 可执行配置）
+- `crates/sr-compiler`: `CompileBundle` 生成（M0-M2 可执行配置）
 - `crates/sr-runner`: `prepare/launch/monitor/cleanup` 执行编排
 - `crates/sr-evidence`: 事件链、hash 与 `run_report.json` 生成
 - `crates/sr-cli`: `safe-run` CLI（`validate` / `compile --dry-run` / `run`）
 - `tests/policy_valid_cases`: 合法策略样例
 - `tests/policy_invalid_cases`: 非法策略样例
 - `tests/compile_snapshot`: 编译输出快照样例
-- `crates/sr-runner/tests`: M1 集成测试（`run_smoke` / `run_failure_paths` / `report_schema_v1`）
-- `examples/`: M1 示例策略（无网/只读根/资源限制）
+- `crates/sr-runner/tests`: M0-M2 集成测试（`run_smoke` / `run_failure_paths` / `report_schema_v1`）
+- `examples/`: M0-M2 示例策略（无网/只读根/资源限制/挂载只读）
 
 ## 本地命令
 
@@ -22,16 +22,19 @@ M1 目标：完成最小执行闭环 `Policy -> Validate -> Compile -> Run -> Re
 cargo run -p sr-cli -- validate tests/policy_valid_cases/minimal.yaml
 cargo run -p sr-cli -- compile --dry-run --policy tests/compile_snapshot/minimal_policy.yaml
 cargo run -p sr-cli -- run --policy examples/m1_network_none.yaml
+cargo run -p sr-cli -- validate examples/m2_mount_readonly.yaml
 cargo test
 ```
 
-## 阶段化用法（M0/M1）
+## 阶段化用法（M0-M2）
 
 - M0 最小链路：`validate` + `compile --dry-run`；`compile` 不带 `--dry-run` 应视为非法调用。
 - M1 在 M0 语义不变基础上新增 `run`；`validate` 与 `compile --dry-run` 行为必须保持兼容。
+- M2 在 M1 基础上新增挂载与路径安全约束（`mounts[].read_only=true`、allowlist/canonicalize、挂载审计事件）。
 - 验收与回归时建议同时覆盖：
   - M0 清单：`M0_CHECKLIST.md`
   - M1 清单：`M1_CHECKLIST.md`
+  - M2 计划与验收项：`M2_STAGE_PLAN.md`
 
 ## 策略编写注意（来自 M0/M1 checklist）
 
@@ -76,7 +79,7 @@ export PATH="$(pwd)/artifacts/bin:$PATH"
 依赖工具：`curl`、`wget`、`unsquashfs`（squashfs-tools）、`mkfs.ext4`（e2fsprogs）。
 `get_rootfs.sh` 与 `get_firecracker.sh` 使用同一组代理环境变量：`SAFE_RUN_USE_LOCAL_PROXY`、`SAFE_RUN_PROXY_URL`。
 
-## M1 运行前置条件
+## 运行前置条件（M1-M2）
 
 - 需要可用的 `firecracker` 与 `jailer` 可执行文件（推荐使用 `./scripts/get_firecracker.sh` 下载本地版本）
 - 需要可写运行目录（默认 `/tmp/safe-run/runs`）
@@ -87,7 +90,7 @@ export PATH="$(pwd)/artifacts/bin:$PATH"
 export SAFE_RUN_WORKDIR_BASE=/your/writable/path
 ```
 
-## M1 运行常见问题与排查
+## 运行常见问题与排查（M1-M2）
 
 - 错误：`SR-RUN-002` + `path=launch.preflight.jailer`
   - 含义：未找到 `jailer` 可执行文件或不可执行。
@@ -99,13 +102,25 @@ export SAFE_RUN_WORKDIR_BASE=/your/writable/path
   - 含义：当前运行环境不允许 KVM/相关系统调用或 socket 绑定。
   - 处理：在具备权限的目标 Linux 主机上执行真实 `run` 验收，并在记录中注明运行环境（沙箱内/外）。
 
-## M1 能力边界
+## M0-M2 能力边界
 
 - 仅支持 `network.mode=none`
 - `networkPlan` 固定为 `null`
-- 不实现 M2 挂载安全强化与 M3 allowlist 生效
+- 不支持 `network.mode=allowlist` 的真实生效（M3 才启用）
 
-## M1 验收与错误码
+## 示例命名约定
+
+- `examples/m1_*.yaml`：M1 最小执行闭环示例。
+- `examples/m2_*.yaml`：M2 挂载与路径安全示例。
+
+## 文档回链
+
+- 总体设计：`plan/OVERVIEW.md`
+- 接口基线：`plan/INTERFACE_BASELINE.md`
+- M2 设计：`plan/M2/OVERVIEW.md`、`plan/M2/INTERFACES.md`、`plan/M2/MOUNT_CLARIFICATIONS.md`
+- 工程规范：`plan/ENGINEERING_CONVENTIONS.md`
+
+## 验收与错误码
 
 - 验收清单：`M1_CHECKLIST.md`
 - 策略错误码：`SR-POL-001`（缺少必填字段）、`SR-POL-002`（字段格式错误）、`SR-POL-003`（策略语义冲突）

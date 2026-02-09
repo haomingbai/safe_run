@@ -2,13 +2,12 @@ use clap::{Parser, Subcommand};
 use sr_common::{ErrorItem, SR_CMP_002, SR_EVD_002, SR_RUN_001};
 use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
-    build_report, compute_artifact_hashes_from_json, compute_integrity_digest, ArtifactJsonInputs,
-    EvidenceEvent, PolicySummary, ResourceUsage, RunReport,
+    build_report, compute_artifact_hashes_from_json, compute_integrity_digest, event_time_range,
+    mount_audit_from_events, resource_usage_from_events, ArtifactJsonInputs, EvidenceEvent,
+    PolicySummary, RunReport,
 };
-use sr_policy::{load_policy_from_path, validate_policy, NetworkMode, PolicySpec};
-use sr_runner::{
-    MonitorResult, RunState, Runner, RunnerControlRequest, RunnerRuntime, RuntimeContext,
-};
+use sr_policy::{load_policy_from_path, validate_policy_with_allowlist, NetworkMode, PolicySpec};
+use sr_runner::{MonitorResult, RunState, Runner, RunnerControlRequest, RuntimeContext};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -16,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 #[command(name = "safe-run")]
-#[command(about = "Safe-Run M1 CLI")]
+#[command(about = "Safe-Run CLI (M0-M2)")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -26,16 +25,22 @@ struct Cli {
 enum Commands {
     Validate {
         policy: String,
+        #[arg(long = "mount-allowlist")]
+        mount_allowlist: Option<String>,
     },
     Compile {
         #[arg(long = "dry-run", default_value_t = false)]
         dry_run: bool,
         #[arg(long)]
         policy: String,
+        #[arg(long = "mount-allowlist")]
+        mount_allowlist: Option<String>,
     },
     Run {
         #[arg(long)]
         policy: String,
+        #[arg(long = "mount-allowlist")]
+        mount_allowlist: Option<String>,
     },
 }
 
@@ -43,16 +48,26 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Validate { policy } => validate_cmd(&policy),
-        Commands::Compile { dry_run, policy } => compile_cmd(dry_run, &policy),
-        Commands::Run { policy } => run_cmd(&policy),
+        Commands::Validate {
+            policy,
+            mount_allowlist,
+        } => validate_cmd(&policy, mount_allowlist.as_deref()),
+        Commands::Compile {
+            dry_run,
+            policy,
+            mount_allowlist,
+        } => compile_cmd(dry_run, &policy, mount_allowlist.as_deref()),
+        Commands::Run {
+            policy,
+            mount_allowlist,
+        } => run_cmd(&policy, mount_allowlist.as_deref()),
     }
 }
 
-fn validate_cmd(policy_path: &str) -> ExitCode {
+fn validate_cmd(policy_path: &str, allowlist_path: Option<&str>) -> ExitCode {
     match load_policy_from_path(policy_path) {
         Ok(policy) => {
-            let result = validate_policy(policy);
+            let result = validate_policy_with_allowlist(policy, allowlist_path);
             print_json_value(&serde_json::to_value(&result).expect("convert validation result"));
             if result.valid {
                 ExitCode::SUCCESS
@@ -67,9 +82,13 @@ fn validate_cmd(policy_path: &str) -> ExitCode {
     }
 }
 
-fn compile_cmd(dry_run: bool, policy_path: &str) -> ExitCode {
+fn compile_cmd(dry_run: bool, policy_path: &str, allowlist_path: Option<&str>) -> ExitCode {
     if !dry_run {
-        let err = ErrorItem::new(SR_CMP_002, "compile.dryRun", "M0 only supports --dry-run");
+        let err = ErrorItem::new(
+            SR_CMP_002,
+            "compile.dryRun",
+            "M0-M2 only supports compile --dry-run",
+        );
         print_error_result(&err);
         return ExitCode::from(2);
     }
@@ -82,7 +101,7 @@ fn compile_cmd(dry_run: bool, policy_path: &str) -> ExitCode {
         }
     };
 
-    let validation = validate_policy(policy);
+    let validation = validate_policy_with_allowlist(policy, allowlist_path);
     if !validation.valid {
         print_json_value(&serde_json::to_value(&validation).expect("convert validation result"));
         return ExitCode::from(2);
@@ -104,8 +123,8 @@ fn compile_cmd(dry_run: bool, policy_path: &str) -> ExitCode {
     }
 }
 
-fn run_cmd(policy_path: &str) -> ExitCode {
-    let normalized = match load_and_validate_policy(policy_path) {
+fn run_cmd(policy_path: &str, allowlist_path: Option<&str>) -> ExitCode {
+    let normalized = match load_and_validate_policy(policy_path, allowlist_path) {
         Ok(policy) => policy,
         Err(code) => return code,
     };
@@ -154,7 +173,10 @@ fn run_outcome_error(
     None
 }
 
-fn load_and_validate_policy(policy_path: &str) -> Result<PolicySpec, ExitCode> {
+fn load_and_validate_policy(
+    policy_path: &str,
+    allowlist_path: Option<&str>,
+) -> Result<PolicySpec, ExitCode> {
     let policy = match load_policy_from_path(policy_path) {
         Ok(policy) => policy,
         Err(err) => {
@@ -162,7 +184,7 @@ fn load_and_validate_policy(policy_path: &str) -> Result<PolicySpec, ExitCode> {
             return Err(ExitCode::from(2));
         }
     };
-    let validation = validate_policy(policy);
+    let validation = validate_policy_with_allowlist(policy, allowlist_path);
     if !validation.valid {
         print_json_value(&serde_json::to_value(&validation).expect("convert validation result"));
         return Err(ExitCode::from(2));
@@ -252,12 +274,13 @@ fn build_report_from_events(
     monitor_result: &MonitorResult,
     events: &[EvidenceEvent],
 ) -> Result<RunReport, ErrorItem> {
-    let (started_at, finished_at) = extract_timestamps(events);
-    let resource_usage = extract_resource_usage(events);
+    let (started_at, finished_at) = event_time_range(events);
+    let resource_usage = resource_usage_from_events(events);
     let policy_summary = PolicySummary {
         network: network_label(&policy.network.mode).to_string(),
         mounts: policy.mounts.len(),
     };
+    let mount_audit = mount_audit_from_events(events);
     let artifacts = compute_report_artifacts(prepared, policy)?;
     Ok(build_report(
         prepared.run_id.clone(),
@@ -268,6 +291,7 @@ fn build_report_from_events(
         policy_summary,
         resource_usage,
         events.to_vec(),
+        mount_audit,
         String::new(),
     ))
 }
@@ -303,14 +327,20 @@ fn load_firecracker_config(path: PathBuf) -> Result<serde_json::Value, ErrorItem
         ErrorItem::new(
             SR_EVD_002,
             "report.firecrackerConfig",
-            format!("failed to read firecracker config '{}': {err}", path.display()),
+            format!(
+                "failed to read firecracker config '{}': {err}",
+                path.display()
+            ),
         )
     })?;
     serde_json::from_str(&raw).map_err(|err| {
         ErrorItem::new(
             SR_EVD_002,
             "report.firecrackerConfig",
-            format!("failed to parse firecracker config '{}': {err}", path.display()),
+            format!(
+                "failed to parse firecracker config '{}': {err}",
+                path.display()
+            ),
         )
     })
 }
@@ -341,44 +371,6 @@ fn load_events(path: &Path) -> Result<Vec<EvidenceEvent>, ErrorItem> {
     Ok(events)
 }
 
-fn extract_timestamps(events: &[EvidenceEvent]) -> (String, String) {
-    if events.is_empty() {
-        let fallback = unix_timestamp_string();
-        return (fallback.clone(), fallback);
-    }
-    let started_at = events.first().map(|event| event.timestamp.clone());
-    let finished_at = events.last().map(|event| event.timestamp.clone());
-    (
-        started_at.unwrap_or_else(unix_timestamp_string),
-        finished_at.unwrap_or_else(unix_timestamp_string),
-    )
-}
-
-fn extract_resource_usage(events: &[EvidenceEvent]) -> ResourceUsage {
-    for event in events.iter().rev() {
-        if event.event_type == "resource.sampled" {
-            let cpu = event
-                .payload
-                .get("cpuUsageUsec")
-                .and_then(|value| value.as_u64())
-                .map(|value| format!("cpuUsageUsec={value}"));
-            let memory = event
-                .payload
-                .get("memoryCurrentBytes")
-                .and_then(|value| value.as_u64())
-                .map(|value| format!("memoryCurrentBytes={value}"));
-            return ResourceUsage {
-                cpu: cpu.unwrap_or_else(|| "cpuUsageUsec=0".to_string()),
-                memory: memory.unwrap_or_else(|| "memoryCurrentBytes=0".to_string()),
-            };
-        }
-    }
-    ResourceUsage {
-        cpu: "cpuUsageUsec=0".to_string(),
-        memory: "memoryCurrentBytes=0".to_string(),
-    }
-}
-
 fn resolve_artifact_paths(
     workdir: &Path,
     firecracker_config: &serde_json::Value,
@@ -393,6 +385,58 @@ fn resolve_artifact_paths(
     let kernel_path = resolve_path(workdir, &kernel_raw);
     let rootfs_path = resolve_path(workdir, &rootfs_raw);
     Ok((kernel_path, rootfs_path))
+}
+
+#[cfg(test)]
+mod allowlist_tests {
+    use super::*;
+    use sr_common::SR_POL_101;
+    use sr_policy::ValidationResult;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn repo_file(path: &str) -> String {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("../../");
+        p.push(path);
+        p.to_string_lossy().to_string()
+    }
+
+    fn validate_from_path(policy_path: &str, allowlist_path: Option<&str>) -> ValidationResult {
+        let policy = load_policy_from_path(policy_path).expect("load policy");
+        validate_policy_with_allowlist(policy, allowlist_path)
+    }
+
+    #[test]
+    fn mount_allowlist_cli_overrides_env() {
+        let _guard = ENV_LOCK.lock().expect("lock env");
+        let policy_path = repo_file("tests/policy_valid_cases/minimal.yaml");
+        let env_allowlist = repo_file("tests/mount_allowlist/allowlist-invalid.yaml");
+        let cli_allowlist = repo_file("tests/mount_allowlist/allowlist-valid.yaml");
+
+        std::env::set_var("SAFE_RUN_MOUNT_ALLOWLIST", &env_allowlist);
+        let result = validate_from_path(&policy_path, Some(&cli_allowlist));
+        std::env::remove_var("SAFE_RUN_MOUNT_ALLOWLIST");
+
+        assert!(result.valid, "expected CLI allowlist to override env");
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn mount_allowlist_env_is_used_when_cli_missing() {
+        let _guard = ENV_LOCK.lock().expect("lock env");
+        let policy_path = repo_file("tests/policy_valid_cases/minimal.yaml");
+        let env_allowlist = repo_file("tests/mount_allowlist/allowlist-invalid.yaml");
+
+        std::env::set_var("SAFE_RUN_MOUNT_ALLOWLIST", &env_allowlist);
+        let result = validate_from_path(&policy_path, None);
+        std::env::remove_var("SAFE_RUN_MOUNT_ALLOWLIST");
+
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|err| err.code == SR_POL_101));
+    }
 }
 
 fn json_string_at(
@@ -476,13 +520,6 @@ fn write_report(path: &Path, report: &RunReport) -> Result<(), ErrorItem> {
     })
 }
 
-fn unix_timestamp_string() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("unix:{}.{:09}", now.as_secs(), now.subsec_nanos())
-}
-
 fn state_label(state: RunState) -> &'static str {
     match state {
         RunState::Prepared => "prepared",
@@ -513,18 +550,19 @@ mod tests {
     use super::*;
     use sr_compiler::compile_dry_run;
     use sr_policy::{Audit, Cpu, Memory, Metadata, Network, NetworkMode, Resources, Runtime};
+    use sr_runner::RunnerRuntime;
     use std::fs::File;
     use std::io::Write;
 
     #[test]
     fn compile_requires_dry_run_flag() {
-        let code = compile_cmd(false, "unused.yaml");
+        let code = compile_cmd(false, "unused.yaml", None);
         assert_eq!(code, ExitCode::from(2));
     }
 
     #[test]
     fn run_rejects_missing_policy_file() {
-        let code = run_cmd("/tmp/safe-run-cli-missing.yaml");
+        let code = run_cmd("/tmp/safe-run-cli-missing.yaml", None);
         assert_eq!(code, ExitCode::from(2));
     }
 
@@ -538,7 +576,7 @@ mod tests {
         )
         .expect("write policy");
 
-        let code = run_cmd(path.to_string_lossy().as_ref());
+        let code = run_cmd(path.to_string_lossy().as_ref(), None);
         assert_eq!(code, ExitCode::from(2));
 
         let _ = fs::remove_file(&path);
@@ -567,7 +605,9 @@ mod tests {
         });
 
         let mut prepared = runner.prepare(request).expect("prepare should succeed");
-        runner.cleanup(&mut prepared).expect("cleanup should succeed");
+        runner
+            .cleanup(&mut prepared)
+            .expect("cleanup should succeed");
 
         let report_path = prepared.artifacts_dir().join(&prepared.artifacts.report);
         let monitor_result = MonitorResult {
@@ -633,7 +673,9 @@ mod tests {
                 cpu: Cpu {
                     max: "100000 100000".to_string(),
                 },
-                memory: Memory { max: "256Mi".to_string() },
+                memory: Memory {
+                    max: "256Mi".to_string(),
+                },
             },
             network: Network {
                 mode: NetworkMode::None,
@@ -661,10 +703,8 @@ mod tests {
     fn write_mock_vm_artifacts(workdir: &Path) {
         let artifacts_dir = workdir.join("artifacts");
         fs::create_dir_all(&artifacts_dir).expect("create artifacts dir");
-        fs::write(artifacts_dir.join("vmlinux"), b"kernel-image")
-            .expect("write mock kernel");
-        fs::write(artifacts_dir.join("rootfs.ext4"), b"rootfs-image")
-            .expect("write mock rootfs");
+        fs::write(artifacts_dir.join("vmlinux"), b"kernel-image").expect("write mock kernel");
+        fs::write(artifacts_dir.join("rootfs.ext4"), b"rootfs-image").expect("write mock rootfs");
     }
 
     fn temp_policy_path(label: &str) -> PathBuf {

@@ -1,4 +1,4 @@
-use sr_common::{SR_POL_001, SR_POL_002, SR_POL_003};
+use sr_common::{SR_POL_001, SR_POL_002, SR_POL_003, SR_POL_103};
 use sr_policy::{load_policy_from_path, validate_policy};
 use std::path::PathBuf;
 
@@ -78,10 +78,8 @@ fn missing_mounts_returns_sr_pol_001() {
 
 #[test]
 fn mount_alias_fields_are_normalized() {
-    let policy = load_policy_from_path(&repo_file(
-        "tests/policy_valid_cases/mount_alias.yaml",
-    ))
-    .expect("load alias policy");
+    let policy = load_policy_from_path(&repo_file("tests/policy_valid_cases/mount_alias.yaml"))
+        .expect("load alias policy");
     let result = validate_policy(policy);
     assert!(result.valid);
     let normalized = result.normalized_policy.expect("normalized policy");
@@ -112,4 +110,20 @@ fn invalid_mount_target_not_absolute_returns_sr_pol_002() {
     let result = validate_policy(policy);
     assert!(!result.valid);
     assert!(result.errors.iter().any(|e| e.code == SR_POL_002));
+}
+
+#[test]
+fn invalid_mount_read_only_false_returns_sr_pol_103() {
+    let policy = load_policy_from_path(&repo_file(
+        "tests/policy_invalid_cases/invalid_mount_read_only_false.yaml",
+    ))
+    .expect("load invalid read_only policy");
+    let result = validate_policy(policy);
+    assert!(!result.valid);
+    let err = result
+        .errors
+        .iter()
+        .find(|e| e.code == SR_POL_103)
+        .expect("expected SR-POL-103");
+    assert_eq!(err.path, "mounts[0].read_only");
 }

@@ -1,4 +1,5 @@
 use crate::constants::{CGROUP_CPU_STAT_FILE, CGROUP_MEMORY_CURRENT_FILE};
+use crate::constants::{EVENT_RESOURCE_SAMPLED, EVENT_RUN_FAILED, EVENT_VM_EXITED, STAGE_MONITOR};
 use crate::event::write_event;
 use crate::model::{MonitorResult, PreparedRun, RunState};
 use nix::errno::Errno;
@@ -112,8 +113,8 @@ fn handle_timeout(
     let _ = finish_with_exit(prepared, exit_code, true, sample_count);
     let _ = write_event(
         prepared,
-        "monitor",
-        "run.failed",
+        STAGE_MONITOR,
+        EVENT_RUN_FAILED,
         json!({
             "reason": "timeout",
             "errorCode": SR_RUN_003,
@@ -150,8 +151,8 @@ fn finish_with_exit(
     if result.exit_code != 0 && !result.timed_out {
         write_event(
             prepared,
-            "monitor",
-            "run.failed",
+            STAGE_MONITOR,
+            EVENT_RUN_FAILED,
             json!({
                 "reason": "abnormal_exit",
                 "errorCode": SR_RUN_001,
@@ -227,8 +228,8 @@ fn write_resource_sample_event(
 ) -> Result<(), ErrorItem> {
     write_event(
         prepared,
-        "monitor",
-        "resource.sampled",
+        STAGE_MONITOR,
+        EVENT_RESOURCE_SAMPLED,
         json!({
             "cpuUsageUsec": sample.cpu_usage_usec,
             "memoryCurrentBytes": sample.memory_current_bytes,
@@ -243,8 +244,8 @@ fn write_vm_exited_event(
 ) -> Result<(), ErrorItem> {
     write_event(
         prepared,
-        "monitor",
-        "vm.exited",
+        STAGE_MONITOR,
+        EVENT_VM_EXITED,
         json!({
             "exitCode": result.exit_code,
             "timedOut": result.timed_out,

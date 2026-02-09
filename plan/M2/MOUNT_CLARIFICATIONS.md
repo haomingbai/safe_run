@@ -52,6 +52,12 @@ guestAllowPrefixes:
   - `/`, `/proc`, `/sys`, `/dev`, `/run`, `/boot`, `/etc`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/usr`
 - 该 denylist 属于安全不变量：M2 仅允许扩展 allowlist，不允许通过配置绕开 denylist。
 
+### 4.1 关于 `/` 的语义澄清（避免“全拒绝”误解）
+
+- `/` 仅禁止将 `target` 设置为根目录本身；**不**扩展到其所有子路径。
+- 其余关键路径（如 `/proc`、`/sys`、`/dev` 等）仍按“自身及其子路径”禁止。
+- 该澄清用于对齐实现与验收：避免把 denylist 误解释为“所有绝对路径都被拒绝”。
+
 ## 5. 可写挂载（read_only=false）的处理
 
 ### 5.1 设计依据
@@ -67,4 +73,34 @@ M2 验收标准包含“风险组合（可写挂载 + 高权限执行）被拒�
 ### 5.3 后续阶段扩展指引（非实现承诺）
 
 若需要支持有限可写挂载，应先在 `plan/` 中新增可证明的权限模型字段（additive），并定义其与 `mounts[].read_only` 的组合语义，再放开该限制。
+
+## 6. 编译输出 mountPlan（M2 新增、additive）
+
+### 6.1 增量接口位置
+
+- `CompileBundle` 新增字段 `mountPlan`（additive）。
+- 该字段用于提供**有序**挂载计划与回滚依据（M2 仅要求顺序与字段完整）。
+
+### 6.2 最小结构（M2）
+
+```json
+{
+  "mountPlan": {
+    "enabled": true,
+    "mounts": [
+      {
+        "source": "/var/lib/safe-run/input",
+        "target": "/data/input",
+        "read_only": true
+      }
+    ]
+  }
+}
+```
+
+约束：
+
+- `mounts[]` 按策略顺序保留，顺序即执行顺序。
+- 仅携带 `source`/`target`/`read_only` 三个字段，不引入额外语义字段。
+- 当 `PolicySpec.mounts` 为空时，`mountPlan.mounts` 必须是空数组（字段必须显式存在）。
 

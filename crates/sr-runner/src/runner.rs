@@ -1,13 +1,20 @@
 use crate::cleanup::cleanup_run;
+use crate::constants::{
+    EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED, EVENT_RUN_FAILED,
+    EVENT_RUN_PREPARED, EVENT_VM_STARTED, STAGE_CLEANUP, STAGE_LAUNCH, STAGE_MOUNT, STAGE_PREPARE,
+};
 use crate::event::write_event;
 use crate::model::{
     LaunchPlan, MonitorResult, PreparedRun, RunState, RunnerControlRequest, RunnerControlResponse,
     RunnerRuntime,
 };
 use crate::monitor::monitor_run;
+use crate::mount_executor::{
+    MountEventHooks, MountExecutor, SystemMountApplier, SystemMountRollbacker,
+};
 use crate::prepare::prepare_run;
 use serde_json::json;
-use sr_common::{ErrorItem, SR_RUN_001, SR_RUN_002};
+use sr_common::{ErrorItem, SR_RUN_001, SR_RUN_002, SR_RUN_101};
 use std::env;
 use std::fs;
 #[cfg(unix)]
@@ -15,20 +22,40 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Debug, Clone, Default)]
 pub struct Runner {
     runtime: RunnerRuntime,
+    mount_executor: MountExecutor,
+}
+
+impl Default for Runner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Runner {
     /// Create a runner with default Firecracker/jailer executables.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            runtime: RunnerRuntime::default(),
+            mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
+        }
     }
 
     /// Create a runner with explicitly provided runtime binaries.
     pub fn with_runtime(runtime: RunnerRuntime) -> Self {
-        Self { runtime }
+        Self {
+            runtime,
+            mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
+        }
+    }
+
+    /// Create a runner with a custom mount executor (used for tests).
+    pub fn with_mount_executor(runtime: RunnerRuntime, mount_executor: MountExecutor) -> Self {
+        Self {
+            runtime,
+            mount_executor,
+        }
     }
 
     pub fn runtime(&self) -> &RunnerRuntime {
@@ -46,8 +73,8 @@ impl Runner {
 
         write_event(
             prepared,
-            "prepare",
-            "run.prepared",
+            STAGE_PREPARE,
+            EVENT_RUN_PREPARED,
             json!({
                 "workdir": prepared.runtime_context.workdir,
                 "timeoutSec": prepared.runtime_context.timeout_sec
@@ -58,6 +85,21 @@ impl Runner {
             self.run_cleanup_on_failure(
                 prepared,
                 "launch.preflight",
+                err.code.clone(),
+                err.message.clone(),
+            );
+            return Err(err);
+        }
+
+        let mount_plan = prepared.mount_plan.clone();
+        let mut hooks = MountEventWriter { prepared };
+        if let Err(err) = self
+            .mount_executor
+            .apply_plan_with_hooks(&mount_plan, &mut hooks)
+        {
+            self.run_cleanup_on_failure(
+                prepared,
+                "mount.apply",
                 err.code.clone(),
                 err.message.clone(),
             );
@@ -94,8 +136,8 @@ impl Runner {
         prepared.state = RunState::Running;
         if let Err(err) = write_event(
             prepared,
-            "launch",
-            "vm.started",
+            STAGE_LAUNCH,
+            EVENT_VM_STARTED,
             json!({
                 "pid": vm_pid,
                 "launcher": prepared.launch_plan.jailer.program
@@ -133,8 +175,8 @@ impl Runner {
                 let message = err.message.clone();
                 let _ = write_event(
                     prepared,
-                    "cleanup",
-                    "run.failed",
+                    STAGE_CLEANUP,
+                    EVENT_RUN_FAILED,
                     json!({
                         "reason": "cleanup.failure",
                         "errorCode": error_code,
@@ -163,14 +205,82 @@ impl Runner {
         let _ = fs::write(prepared.cleanup_marker_path(), "cleanup invoked");
         let _ = write_event(
             prepared,
-            "cleanup",
-            "run.failed",
+            STAGE_CLEANUP,
+            EVENT_RUN_FAILED,
             json!({
                 "reason": reason,
                 "errorCode": error_code,
                 "message": message
             }),
         );
+    }
+}
+
+fn mount_event_enabled(prepared: &PreparedRun, event_type: &str) -> bool {
+    prepared.evidence_plan.enabled
+        && prepared
+            .evidence_plan
+            .events
+            .iter()
+            .any(|event| event == event_type)
+}
+
+fn write_mount_event_if_enabled(
+    prepared: &mut PreparedRun,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> Result<(), ErrorItem> {
+    if !mount_event_enabled(prepared, event_type) {
+        return Ok(());
+    }
+    write_event(prepared, STAGE_MOUNT, event_type, payload)
+}
+
+struct MountEventWriter<'a> {
+    prepared: &'a mut PreparedRun,
+}
+
+impl<'a> MountEventHooks for MountEventWriter<'a> {
+    fn on_validated(&mut self, entry: &sr_compiler::MountPlanEntry) -> Result<(), ErrorItem> {
+        write_mount_event_if_enabled(
+            self.prepared,
+            EVENT_MOUNT_VALIDATED,
+            json!({
+                "source": entry.source.as_str(),
+                "target": entry.target.as_str(),
+                "read_only": entry.read_only
+            }),
+        )
+    }
+
+    fn on_applied(&mut self, entry: &sr_compiler::MountPlanEntry) -> Result<(), ErrorItem> {
+        write_mount_event_if_enabled(
+            self.prepared,
+            EVENT_MOUNT_APPLIED,
+            json!({
+                "source": entry.source.as_str(),
+                "target": entry.target.as_str(),
+                "read_only": entry.read_only
+            }),
+        )
+    }
+
+    fn on_rejected(
+        &mut self,
+        entry: &sr_compiler::MountPlanEntry,
+        message: &str,
+    ) -> Result<(), ErrorItem> {
+        write_mount_event_if_enabled(
+            self.prepared,
+            EVENT_MOUNT_REJECTED,
+            json!({
+                "source": entry.source.as_str(),
+                "target": entry.target.as_str(),
+                "read_only": entry.read_only,
+                "errorCode": SR_RUN_101,
+                "message": message
+            }),
+        )
     }
 }
 

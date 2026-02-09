@@ -5,6 +5,10 @@ use common::{
     parse_event_stream, remove_temp_dir, runner_with_mock_runtime, runtime_context,
     write_mock_cgroup_files, write_mock_vm_artifacts, write_report,
 };
+use sr_evidence::{
+    EVENT_COMPILE, EVENT_RESOURCE_SAMPLED, EVENT_RUN_CLEANED, EVENT_RUN_PREPARED, EVENT_VM_EXITED,
+    EVENT_VM_STARTED,
+};
 use sr_runner::RunnerControlRequest;
 
 #[test]
@@ -36,16 +40,22 @@ fn minimal_run_executes_and_writes_report() {
     assert!(monitor_result.sample_count > 0);
 
     let events = parse_event_stream(&prepared.event_log_path());
-    assert!(events.iter().any(|event| event.event_type == "compile"));
+    assert!(events.iter().any(|event| event.event_type == EVENT_COMPILE));
     assert!(events
         .iter()
-        .any(|event| event.event_type == "run.prepared"));
-    assert!(events.iter().any(|event| event.event_type == "vm.started"));
+        .any(|event| event.event_type == EVENT_RUN_PREPARED));
     assert!(events
         .iter()
-        .any(|event| event.event_type == "resource.sampled"));
-    assert!(events.iter().any(|event| event.event_type == "vm.exited"));
-    assert!(events.iter().any(|event| event.event_type == "run.cleaned"));
+        .any(|event| event.event_type == EVENT_VM_STARTED));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_RESOURCE_SAMPLED));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_VM_EXITED));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_RUN_CLEANED));
 
     let report = build_report_from_events(
         &workdir,

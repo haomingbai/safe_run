@@ -71,6 +71,7 @@
   - `firecrackerConfig`
   - `jailerPlan`
   - `cgroupPlan`
+  - `mountPlan`（M2 起 additive）
   - `networkPlan`（M3 起非空）
   - `evidencePlan`
 

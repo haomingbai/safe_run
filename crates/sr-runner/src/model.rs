@@ -3,7 +3,7 @@ use crate::constants::{
     FIRECRACKER_API_SOCKET_FILE, FIRECRACKER_CONFIG_FILE, RUNTIME_CONTEXT_FILE, VM_PID_FILE,
 };
 use serde::{Deserialize, Serialize};
-use sr_compiler::CompileBundle;
+use sr_compiler::{CompileBundle, EvidencePlan, MountPlan};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -111,6 +111,8 @@ pub struct PreparedRun {
     pub artifacts: RunArtifacts,
     pub event_stream: Vec<String>,
     pub launch_plan: LaunchPlan,
+    pub mount_plan: MountPlan,
+    pub evidence_plan: EvidencePlan,
     pub(crate) workdir_path: PathBuf,
     pub(crate) artifacts_dir_path: PathBuf,
     pub(crate) last_event_hash: String,

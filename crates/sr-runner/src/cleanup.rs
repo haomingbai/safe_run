@@ -1,3 +1,4 @@
+use crate::constants::{EVENT_RUN_CLEANED, STAGE_CLEANUP};
 use crate::event::write_event;
 use crate::model::{PreparedRun, RunState};
 use serde_json::json;
@@ -23,8 +24,8 @@ pub(crate) fn cleanup_run(prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
     })?;
     write_event(
         prepared,
-        "cleanup",
-        "run.cleaned",
+        STAGE_CLEANUP,
+        EVENT_RUN_CLEANED,
         json!({
             "state": state_label(prepared.state),
             "cleanupMarker": prepared.cleanup_marker_path()

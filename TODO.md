@@ -1,136 +1,98 @@
-# TODO：M2 阶段执行计划（测试先行 / 单窗口 Stage）
+# TODO：M3 前代码清理与规范化计划（统一范式 / 低耦合 / 文档一致）
 
-## 0. 使用规则
+> 本 TODO 的目标不是“加功能”，而是在进入 M3（网络 allowlist）之前把 M0-M2 代码整理到可维护状态：
+>
+> - 注释清晰、命名一致、模块职责单一、实现路径唯一
+> - 同一类能力只保留一种实现方式（避免多个风格/多个实现并存）
+> - 文档与实现一致（以 plan/ 为唯一事实来源）
 
-- 任务状态用 Markdown 勾选框维护：`[ ]` 未完成，`[x]` 已完成。
-- 每完成一个 Stage：至少跑对应 `cargo test ...`，并回填本文件。
-- 所有结论与实现必须可追溯到 `plan/`；若需改变接口语义，必须先更新 `plan/` 并获得确认（见 AGENTS.md）。
+## 0. 依据（唯一事实来源）
 
-## 1. 依据文档（唯一事实来源）
+- 全局：plan/OVERVIEW.md、plan/INTERFACE_BASELINE.md
+- M2：plan/M2/OVERVIEW.md、plan/M2/MODULES.md、plan/M2/INTERFACES.md、plan/M2/MOUNT_CLARIFICATIONS.md
+- 工程规范（本次新增）：plan/ENGINEERING_CONVENTIONS.md
 
-- plan/OVERVIEW.md
-- plan/INTERFACE_BASELINE.md
-- plan/M2/OVERVIEW.md
-- plan/M2/MODULES.md
-- plan/M2/INTERFACES.md
-- plan/M2/ARCHITECTURE.md
-- plan/M2/REFERENCES.md
-- 本执行拆分来源：M2_STAGE_PLAN.md（仅作拆分与执行口径，不覆盖 plan/ 约束）
+## 1. 本次清理的硬边界（必须始终满足）
 
-## 2. M2 阶段硬约束（必须始终满足）
+- [x] 不突破阶段边界：M0-M2 不引入 `network.mode=allowlist` 的可执行能力；CompileBundle.networkPlan 必须保持 null。
+- [x] 接口兼容：仅 additive change，禁止删除/重命名已发布字段（见 plan/INTERFACE_BASELINE.md）。
+- [x] 不改语义：只做重构/命名/注释/抽取公共组件，确保 `cargo test` 全绿。
 
-- [ ] M2-C-001 接口兼容：仅 additive change；禁止删除/重命名已发布字段。
-- [ ] M2-C-002 M0-M2 网络固定：`network.mode=none`；`CompileBundle.networkPlan` 必须保持 `null`。
-- [ ] M2-C-003 `PolicySpec.runtime.args` 与 `PolicySpec.mounts` 必须显式存在（可为空数组但不可缺失）。
-- [ ] M2-C-004 挂载决策必须走 `sr-policy` 统一策略引擎，禁止绕过。
+## 2. P0：文案与注释对齐（低风险、立刻降噪）
 
-## 3. 待确认（信息不足会导致“臆造实现”）
+- [x] sr-cli：把 CLI 描述从 “M1” 修正为 “M0-M2” 或“当前阶段”（避免误导）。
+- [x] sr-policy：把网络错误信息中的 “M0 only supports …” 修正为 “M0-M2 only supports …”。
+- [x] sr-compiler：把编译网络约束信息中的 “M1 compile requires …” 修正为与基线一致的表述。
+- [x] 统一注释风格：公共函数/关键逻辑必须有 doc comment，说明“职责 + 边界 + 错误码映射”。
 
-> 你在 M2_STAGE_PLAN.md 已给出方向，但仍需要把“可执行参数/机制”定稿，否则无法写出不歧义的测试与实现。
+验收：
 
-- [x] M2-Q-001 宿主路径白名单“配置文件”形态与加载位置已定稿：
-  - 来源优先级：CLI `--mount-allowlist` > 环境变量 `SAFE_RUN_MOUNT_ALLOWLIST` > 内置默认。
-  - 格式：YAML（带 `schemaVersion: safe-run.mount-allowlist/v1`）。
-  - 未提供配置时：使用内置默认白名单（与现有示例对齐）。
-- [x] M2-Q-002 guestPath 命名空间规约已定稿：
-  - guest allowlist 前缀来自 allowlist 配置（默认 `['/data']`）。
-  - 关键系统路径 denylist 不可绕开；M2 仅允许扩展 allowlist，不允许配置绕开 denylist。
-- [x] M2-Q-003 “风险组合”已定稿（不新增字段）：
-  - 依据 `plan/M2/OVERVIEW.md` 的验收项“可写挂载 + 高权限执行”拒绝。
-  - M2 采取最小且不歧义规则：`mounts[].read_only` 必须为 `true`；否则返回 `SR-POL-103`。
-  - 若后续阶段要支持可写挂载，必须先在 `plan/` 中新增可证明的权限模型字段（additive）再放开。
-- [x] M2-Q-004 mounts 字段命名映射已定稿：
-  - 规范字段名：`source/target/read_only`；兼容输入别名：`hostPath/guestPath/readOnly`。
+- [x] `cargo fmt`、`cargo test` 全通过。
+- [x] 关键提示文本不再出现阶段误标（抽样检查）。
 
-## Stage 0：需求/设计确认与 plan/ 补丁（必须先完成）
+## 3. P1：常量与命名统一（减少硬编码与重复）
 
-**目标**：让 Stage 1-6 的测试与实现都有明确可执行的规范。
+目标：事件类型、文件名、默认路径、错误码 path label 的风格统一。
 
-- [x] M2-S0-001 将“挂载白名单配置文件”最小规范写入 plan/M2（来源优先级 + YAML schemaVersion + 默认值）。
-- [x] M2-S0-002 将“guestPath 命名空间 + 关键路径 denylist 不可绕开”写入 plan/M2。
-- [x] M2-S0-003 将“风险组合（可写挂载）处理：M2 禁止可写挂载，不新增字段”写入 plan/M2。
-- [x] M2-S0-004 将 mounts 字段映射策略（canonical + alias）写入 plan/INTERFACE_BASELINE.md 与 plan/M2/INTERFACES.md。
+- [x] 事件类型常量统一来源：
+  - 将 `run.prepared`、`vm.started`、`vm.exited`、`run.cleaned`、`run.failed`、`resource.sampled`、`compile` 等事件类型，像 mount.* 一样集中定义为常量，并在 runner/tests 中消灭硬编码字符串。
+  - 只允许一个权威来源（建议 sr-evidence 导出常量，runner/cli/compiler 引用）。
+- [x] “stage” 字段常量化：`compile` / `mount` / `launch` / `monitor` / `cleanup` 等 stage 名称避免散落字符串。
+- [x] artifacts 文件名常量集中：runner 的 artifacts 文件名常量保持集中定义并避免重复定义。
 
-### 验收标准（可执行）
+验收：
 
-- [ ] M2-A0-001 完成上述确认后，本 TODO 的 Stage 1-6 不再依赖“口头假设”。
+- [x] 全仓 `grep` 硬编码事件字符串显著减少（只保留常量定义处/必要的序列化）。
+- [x] `cargo test` 全通过。
 
----
+## 4. P2：错误处理范式统一（ErrorItem / path label / 错误码）
 
-## Stage 1：接口对齐与错误码脚手架（测试先行）
+目标：所有模块返回错误的方式一致，可聚合、可测试、可追踪。
 
-- [x] M2-S1-T001（先测试）sr-policy：解析 `hostPath/guestPath/readOnly` 样例成功并规范化到内部结构。
-- [x] M2-S1-T002（先测试）sr-policy：新增无效用例覆盖 `hostPath/source` 为空、`guestPath/target` 非绝对路径。
-- [x] M2-S1-I001（实现）sr-policy::Mount 增加 serde alias：`hostPath->source`、`guestPath->target`、`readOnly->read_only`（additive）。
-- [x] M2-S1-I002（实现）sr-common 增加错误码常量：`SR_POL_101/102/103`、`SR_RUN_101`（按 plan/M2/INTERFACES.md）。
+- [x] 统一 ErrorItem.path 命名规则（例如：模块.子系统.动作 或 I-xxx 字段路径），并在 plan/ENGINEERING_CONVENTIONS.md 固化。
+- [x] 统一“错误码选择”与“人类可读 message”的风格：
+  - 校验错误（SR-POL-*）尽量指向具体字段路径（如 `mounts[i].source`）。
+  - 编译错误（SR-CMP-*）指向 compile 输出缺失/非法请求的路径（如 `mountPlan.enabled`）。
+  - 运行错误（SR-RUN-*）区分 preflight / mount / vm / cleanup 的 path 段。
+- [x] 消除重复的错误构造样板：在各模块内抽取 `error_helpers`（不跨模块塞逻辑）。
 
-### Stage 1 验收标准
+验收：
 
-- [x] M2-S1-A001 `cargo test -p sr-policy`
-- [x] M2-S1-A002 `cargo test -p sr-common`（如该 crate 有测试）
+- [x] 新增 1-2 个断言测试，确保错误 path 与 code 稳定。
+- [x] `cargo test` 全通过。
 
-## Stage 2：PathSecurityEngine（canonicalize + 白名单前缀）
+## 5. P3：模块职责再核对与文件拆分（降低耦合，提升可读性）
 
-- [x] M2-S2-T001（先测试）临时目录下 allowlisted 路径通过。
-- [x] M2-S2-T002（先测试）allowlisted 目录内 symlink 指向非白名单目录时拒绝。
-- [x] M2-S2-T003（先测试）`..` 穿越 canonicalize 后落到白名单外时拒绝。
-- [x] M2-S2-I001（实现）新增 `PathSecurityEngine`（crates/sr-policy/src/path_security.rs）。
-- [x] M2-S2-I002（实现）在 `validate_policy()` 中调用；失败映射 `SR-POL-101`。
+目标：每个 crate 只做自己该做的事；避免“同一能力多处实现”。
 
-### Stage 2 验收标准
+- [x] sr-cli：只保留“参数解析 + I/O + 用户交互”；可复用纯逻辑下沉到对应 crate。
+- [x] sr-policy：path_security 只负责 allowlist + canonicalize；mount_constraints 只负责敏感路径/guest 规则；校验链保持单一入口。
+- [x] sr-compiler：mount_plan builder 与 evidencePlan/ensure_bundle_complete 职责边界明确。
+- [x] sr-runner：Runner 编排与 MountExecutor/rollback 交互保持单一路径，避免未来 M3 再造一套。
+- [x] sr-evidence：hashing/normalize/report_builder 的公共能力在 crate 内唯一来源；禁止 cli/runner 复制实现。
 
-- [x] M2-S2-A001 `cargo test -p sr-policy`
+验收：
 
-## Stage 3：MountConstraints（敏感宿主路径 + guestPath 命名空间）
+- [x] 每个 crate 的入口文件可在 2-3 分钟内读懂（主流程清晰）。
+- [x] `cargo test` 全通过。
 
-- [ ] M2-S3-T001（先测试）source canonicalize 后位于敏感宿主路径（如 `/proc`、`/sys`、`/dev`）拒绝。
-- [ ] M2-S3-T002（先测试）target 不在允许命名空间或覆盖关键路径时拒绝。
-- [ ] M2-S3-I001（实现）新增 `mount_constraints.rs`，落地 denylist + 命名空间规则。
-- [ ] M2-S3-I002（实现）错误码映射：target/命名空间违规使用 `SR-POL-102`。
+## 6. P4：开发范式统一（测试、目录、命名、示例）
 
-### Stage 3 验收标准
+- [x] 测试组织统一：单测在 crate 内；跨 crate 行为验证在 `crates/*/tests`；顶层 `tests/` 仅放样例/快照与验收数据。
+- [x] 示例与样例命名统一：`m1_*.yaml`、`m2_*.yaml` 的策略文件命名规则明确并写入 README/plan。
+- [x] 文档回链：README 与 plan/ 索引保持一致，避免过期阶段说明。
 
-- [ ] M2-S3-A001 `cargo test -p sr-policy`
+验收：
 
-## Stage 4：编译阶段 MountPlanBuilder（可回滚计划 + 快照测试）
+- [x] README 命令示例与当前 CLI 一致。
+- [x] `cargo test` 全通过。
 
-- [ ] M2-S4-T001（先测试）sr-compiler：包含 mounts 的 PolicySpec 编译输出必须包含“挂载计划”（需以 Stage 0 的设计确认决定承载位置）。
-- [ ] M2-S4-T002（先测试）挂载计划快照测试，确保规则变更可感知。
-- [ ] M2-S4-I001（实现）新增 crates/sr-compiler/src/mount_plan.rs（MountPlanBuilder）。
-- [ ] M2-S4-I002（实现）注入编译输出，且保持 `networkPlan=null`。
+## 7. 执行顺序建议
 
-### Stage 4 验收标准
+1) P0（文案/注释） → 2) P1（常量统一） → 3) P2（错误范式） → 4) P3（拆分与职责） → 5) P4（测试/示例/文档）
 
-- [ ] M2-S4-A001 `cargo test -p sr-compiler`
+## 附：已发现的“统一点候选”（用于落任务时逐项勾选）
 
-## Stage 5：Runner 挂载执行与失败回滚（尽量不依赖 root）
-
-- [ ] M2-S5-T001（先测试）挂载计划执行顺序/回滚顺序的纯逻辑测试（不做真实 mount）。
-- [ ] M2-S5-T002（可选）root-only 最小集成测试使用 `#[ignore]`。
-- [ ] M2-S5-I001（实现）新增 mount_executor.rs / rollback.rs，按计划应用并逆序回滚。
-- [ ] M2-S5-I002（实现）挂载应用失败返回 `SR-RUN-101`。
-
-### Stage 5 验收标准
-
-- [ ] M2-S5-A001 `cargo test -p sr-runner`
-
-## Stage 6：证据链与报告 mountAudit（additive）
-
-- [ ] M2-S6-T001（先测试）从 events.jsonl（含 mount.validated/rejected/applied）生成报告，断言包含 `mountAudit` 且计数/reasons 正确。
-- [ ] M2-S6-I001（实现）sr-evidence 增加挂载审计聚合器，注入 `RunReport.mountAudit`（additive）。
-- [ ] M2-S6-I002（实现）补齐新事件类型：mount.validated / mount.rejected / mount.applied。
-
-### Stage 6 验收标准
-
-- [ ] M2-S6-A001 `cargo test -p sr-evidence`
-- [ ] M2-S6-A002 `cargo test`
-
----
-
-## M2 总体验收标准（阶段 DoD，可编译可运行验证）
-
-- [ ] M2-DOD-001 路径逃逸（`..` / symlink / 非白名单）稳定拦截并返回正确错误码（SR-POL-101/102/103）。
-- [ ] M2-DOD-002 编译输出包含可回滚挂载计划，且快照测试能感知变更。
-- [ ] M2-DOD-003 挂载应用失败能回滚并返回 SR-RUN-101。
-- [ ] M2-DOD-004 run_report.json additive 增加 mountAudit，并可从事件流重建。
-- [ ] M2-DOD-005 约束回归：network 固定 none，CompileBundle.networkPlan 仍为 null。
+- [x] 事件类型字符串在 sr-runner 与测试中多处硬编码，建议集中常量化。
+- [x] 部分提示文本仍含 “M0/M1 only supports …” 的过期表述，需与“网络固定 none（M0-M2）”对齐。
+- [x] CLI about 仍写 “M1 CLI”，与当前能力不一致。

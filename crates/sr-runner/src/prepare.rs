@@ -1,4 +1,6 @@
-use crate::constants::{ARTIFACTS_DIR, EVENTS_FILE, GENESIS_HASH, REPORT_FILE};
+use crate::constants::{
+    ARTIFACTS_DIR, EVENTS_FILE, EVENT_COMPILE, GENESIS_HASH, REPORT_FILE, STAGE_COMPILE,
+};
 use crate::event::write_event;
 use crate::launch::assemble_launch_plan;
 use crate::model::{
@@ -40,6 +42,8 @@ pub(crate) fn prepare_run(
         },
         event_stream: vec![EVENTS_FILE.to_string()],
         launch_plan,
+        mount_plan: compile_bundle.mount_plan.clone(),
+        evidence_plan: compile_bundle.evidence_plan.clone(),
         workdir_path,
         artifacts_dir_path,
         last_event_hash: GENESIS_HASH.to_string(),
@@ -256,11 +260,7 @@ fn target_artifact_path(
     Ok(workdir_path.join(raw))
 }
 
-fn copy_artifact_if_needed(
-    source: &Path,
-    target: &Path,
-    label: &str,
-) -> Result<(), ErrorItem> {
+fn copy_artifact_if_needed(source: &Path, target: &Path, label: &str) -> Result<(), ErrorItem> {
     let metadata = fs::metadata(source).map_err(|err| {
         ErrorItem::new(
             SR_RUN_002,
@@ -361,14 +361,14 @@ fn write_compile_event_if_enabled(
         .evidence_plan
         .events
         .iter()
-        .any(|event| event == "compile")
+        .any(|event| event == EVENT_COMPILE)
     {
         return Ok(());
     }
     write_event(
         prepared,
-        "compile",
-        "compile",
+        STAGE_COMPILE,
+        EVENT_COMPILE,
         json!({"status": "ok"}),
     )
 }

@@ -1,8 +1,10 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sr_common::{ErrorItem, SR_POL_001, SR_POL_002, SR_POL_003};
+use sr_common::{ErrorItem, SR_POL_001, SR_POL_002, SR_POL_003, SR_POL_103};
 
+mod mount_constraints;
 mod path_security;
+use mount_constraints::MountConstraints;
 use path_security::PathSecurityEngine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +82,8 @@ pub struct ValidationResult {
     pub normalized_policy: Option<PolicySpec>,
 }
 
+/// Parse policy YAML/JSON into `PolicySpec`.
+/// Error mapping: missing required fields -> `SR-POL-001`, invalid structure -> `SR-POL-002`.
 pub fn parse_policy(input: &str) -> Result<PolicySpec, ErrorItem> {
     serde_yaml::from_str::<PolicySpec>(input).map_err(|e| {
         let message = format!("failed to parse policy: {e}");
@@ -88,13 +92,15 @@ pub fn parse_policy(input: &str) -> Result<PolicySpec, ErrorItem> {
         } else {
             SR_POL_002
         };
-        ErrorItem::new(code, "policy", message)
+        pol_error(code, "policy", message)
     })
 }
 
+/// Load and parse policy file from disk.
+/// Error mapping: file read failures -> `SR-POL-001`, parse failures follow `parse_policy`.
 pub fn load_policy_from_path(path: &str) -> Result<PolicySpec, ErrorItem> {
     let text = std::fs::read_to_string(path).map_err(|e| {
-        ErrorItem::new(
+        pol_error(
             SR_POL_001,
             "policy",
             format!("failed to read policy file: {e}"),
@@ -103,10 +109,14 @@ pub fn load_policy_from_path(path: &str) -> Result<PolicySpec, ErrorItem> {
     parse_policy(&text)
 }
 
+/// Validate policy with default allowlist source resolution.
 pub fn validate_policy(policy: PolicySpec) -> ValidationResult {
     validate_policy_with_allowlist(policy, None)
 }
 
+/// Validate policy semantics and emit normalized policy on success.
+/// Boundary: M0-M2 only supports `network.mode=none`; mounts must pass allowlist + constraint checks.
+/// Error mapping: `SR-POL-001/002/003/101/102/103` with field-oriented `path`.
 pub fn validate_policy_with_allowlist(
     mut policy: PolicySpec,
     allowlist_path: Option<&str>,
@@ -121,9 +131,12 @@ pub fn validate_policy_with_allowlist(
             None
         }
     };
+    let mount_constraints = allowlist_engine
+        .as_ref()
+        .map(|engine| MountConstraints::new(engine.guest_allow_prefixes().to_vec()));
 
     if policy.api_version != "policy.safe-run.dev/v1alpha1" {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_002,
             "apiVersion",
             "apiVersion must be policy.safe-run.dev/v1alpha1",
@@ -131,7 +144,7 @@ pub fn validate_policy_with_allowlist(
     }
 
     if policy.metadata.name.trim().is_empty() {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_001,
             "metadata.name",
             "metadata.name is required",
@@ -139,7 +152,7 @@ pub fn validate_policy_with_allowlist(
     }
 
     if policy.runtime.command.trim().is_empty() {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_001,
             "runtime.command",
             "runtime.command is required",
@@ -148,7 +161,7 @@ pub fn validate_policy_with_allowlist(
 
     let cpu_re = Regex::new(r"^(max|[0-9]+)\s+(max|[0-9]+)$").expect("regex");
     if !cpu_re.is_match(policy.resources.cpu.max.trim()) {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_002,
             "resources.cpu.max",
             "cpu.max must be '<quota> <period>'",
@@ -157,7 +170,7 @@ pub fn validate_policy_with_allowlist(
 
     let mem_re = Regex::new(r"^[0-9]+(Ki|Mi|Gi)$").expect("regex");
     if !mem_re.is_match(policy.resources.memory.max.trim()) {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_002,
             "resources.memory.max",
             "memory.max must be like 256Mi",
@@ -165,31 +178,60 @@ pub fn validate_policy_with_allowlist(
     }
 
     if policy.network.mode != NetworkMode::None {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_003,
             "network.mode",
-            "M0 only supports network.mode=none",
+            "M0-M2 only supports network.mode=none",
         ));
     }
 
     for (idx, mount) in policy.mounts.iter().enumerate() {
+        let mut source_valid = true;
+        let mut target_valid = true;
+        let mut source_canonical = None;
         if mount.source.trim().is_empty() {
-            errors.push(ErrorItem::new(
+            errors.push(pol_error(
                 SR_POL_002,
-                format!("mounts[{idx}].source"),
+                mount_field_path(idx, "source"),
                 "mount source cannot be empty",
             ));
+            source_valid = false;
         }
         if mount.target.trim().is_empty() || !mount.target.starts_with('/') {
-            errors.push(ErrorItem::new(
+            errors.push(pol_error(
                 SR_POL_002,
-                format!("mounts[{idx}].target"),
+                mount_field_path(idx, "target"),
                 "mount target must be an absolute path",
+            ));
+            target_valid = false;
+        }
+        if !mount.read_only {
+            errors.push(pol_error(
+                SR_POL_103,
+                mount_field_path(idx, "read_only"),
+                "mounts must be read-only in M2",
             ));
         }
         if let Some(engine) = allowlist_engine.as_ref() {
-            if !mount.source.trim().is_empty() {
-                if let Err(err) = engine.validate_source_path(&mount.source, idx) {
+            if source_valid {
+                match engine.validate_source_path(&mount.source, idx) {
+                    Ok(canonical) => {
+                        source_canonical = Some(canonical);
+                    }
+                    Err(err) => {
+                        errors.push(err);
+                    }
+                }
+            }
+        }
+        if let Some(constraints) = mount_constraints.as_ref() {
+            if let Some(canonical) = source_canonical.as_ref() {
+                if let Err(err) = constraints.validate_source_sensitive(canonical, idx) {
+                    errors.push(err);
+                }
+            }
+            if target_valid {
+                if let Err(err) = constraints.validate_target_path(&mount.target, idx) {
                     errors.push(err);
                 }
             }
@@ -197,7 +239,7 @@ pub fn validate_policy_with_allowlist(
     }
 
     if policy.audit.level.trim().is_empty() {
-        errors.push(ErrorItem::new(
+        errors.push(pol_error(
             SR_POL_001,
             "audit.level",
             "audit.level is required",
@@ -259,4 +301,16 @@ mod tests {
         assert!(!result.valid);
         assert_eq!(result.errors[0].code, SR_POL_003);
     }
+}
+
+fn pol_error(
+    code: impl Into<String>,
+    path: impl Into<String>,
+    message: impl Into<String>,
+) -> ErrorItem {
+    ErrorItem::new(code, path, message)
+}
+
+fn mount_field_path(idx: usize, field: &str) -> String {
+    format!("mounts[{idx}].{field}")
 }
