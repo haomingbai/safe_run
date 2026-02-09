@@ -20,6 +20,10 @@ network:
 
 - `mode=allowlist` 时必须提供至少一条规则。
 - 仅允许显式定义的协议/目标/端口组合。
+- M3 定稿细则（详见 `plan/M3/NETWORK_CLARIFICATIONS.md`）：
+  - `protocol` 仅允许 `tcp|udp`（IPv4-only）。
+  - `port` 必填，范围 `1..=65535`。
+  - `host` 与 `cidr` 必须二选一；`host` 在运行期解析（A 记录）。
 
 ## 2. I-CP-001 networkPlan（M3 起非空）
 
@@ -29,12 +33,17 @@ network:
     "tap": {"name": "sr-tap-<runId>"},
     "nft": {
       "table": "safe_run",
-      "chains": ["output"],
+      "chains": ["forward"],
       "rules": []
     }
   }
 }
 ```
+
+说明：
+
+- 当 `network.mode=none`：`networkPlan` 必须为 `null`（保持 M0-M2 口径与快照兼容）。
+- 当 `network.mode=allowlist`：`networkPlan` 必须为非空对象（详见 `plan/M3/NETWORK_CLARIFICATIONS.md`）。
 
 ## 3. I-EV-001 新增网络事件
 

@@ -1,98 +1,96 @@
-# TODO：M3 前代码清理与规范化计划（统一范式 / 低耦合 / 文档一致）
+# TODO：M3 冲刺计划（测试主导 / 先澄清后编码）
 
-> 本 TODO 的目标不是“加功能”，而是在进入 M3（网络 allowlist）之前把 M0-M2 代码整理到可维护状态：
->
-> - 注释清晰、命名一致、模块职责单一、实现路径唯一
-> - 同一类能力只保留一种实现方式（避免多个风格/多个实现并存）
-> - 文档与实现一致（以 plan/ 为唯一事实来源）
+> 本节用于进入 M3 后的执行分解与进度跟踪；接口语义与阶段边界以 `plan/` 为准。
+> 详细执行计划见：`M3_STAGE_PLAN.md`。
 
-## 0. 依据（唯一事实来源）
+## 1. 依据（唯一事实来源）
 
-- 全局：plan/OVERVIEW.md、plan/INTERFACE_BASELINE.md
-- M2：plan/M2/OVERVIEW.md、plan/M2/MODULES.md、plan/M2/INTERFACES.md、plan/M2/MOUNT_CLARIFICATIONS.md
-- 工程规范（本次新增）：plan/ENGINEERING_CONVENTIONS.md
+- 全局：`plan/OVERVIEW.md`、`plan/INTERFACE_BASELINE.md`、`plan/ENGINEERING_CONVENTIONS.md`
+- M3：`plan/M3/OVERVIEW.md`、`plan/M3/MODULES.md`、`plan/M3/INTERFACES.md`、`plan/M3/ARCHITECTURE.md`、`plan/M3/REFERENCES.md`
+- M3 澄清：`plan/M3/NETWORK_CLARIFICATIONS.md`
+- 执行计划：`M3_STAGE_PLAN.md`
 
-## 1. 本次清理的硬边界（必须始终满足）
+## 2. 全局验收标准（M3 DoD）
 
-- [x] 不突破阶段边界：M0-M2 不引入 `network.mode=allowlist` 的可执行能力；CompileBundle.networkPlan 必须保持 null。
-- [x] 接口兼容：仅 additive change，禁止删除/重命名已发布字段（见 plan/INTERFACE_BASELINE.md）。
-- [x] 不改语义：只做重构/命名/注释/抽取公共组件，确保 `cargo test` 全绿。
+- [ ] **测试结果**：`cargo test` 全绿（默认不运行 `#[ignore]`）。
+- [ ] **阶段边界**：不破坏 M0-M2 语义（`compile --dry-run` 约束仍成立；none 模式仍为默认拒绝）。
+- [ ] **接口兼容**：仅 additive change；任何语义变更先更新 `plan/` 再改代码。
+- [ ] **可回收**：网络规则与资源必须随 run 生命周期创建与销毁，异常退出不得残留。
 
-## 2. P0：文案与注释对齐（低风险、立刻降噪）
+## 3. 测试代码标准（M3 强制）
 
-- [x] sr-cli：把 CLI 描述从 “M1” 修正为 “M0-M2” 或“当前阶段”（避免误导）。
-- [x] sr-policy：把网络错误信息中的 “M0 only supports …” 修正为 “M0-M2 only supports …”。
-- [x] sr-compiler：把编译网络约束信息中的 “M1 compile requires …” 修正为与基线一致的表述。
-- [x] 统一注释风格：公共函数/关键逻辑必须有 doc comment，说明“职责 + 边界 + 错误码映射”。
+- [ ] 先写测试再写实现（每个 Stage 以“失败测试 -> 最小实现 -> 补覆盖”闭环）。
+- [ ] 默认测试不依赖 root/真实 nft/tap：系统调用通过 trait 注入（参考 mount_executor 模式）。
+- [ ] 快照与序列化必须确定性：规则排序稳定；不引入随机/时间到编译输出。
+- [ ] 断言引用常量：错误码来自 `crates/sr-common`；事件类型来自 `crates/sr-evidence`。
 
-验收：
+## 4. Stage 任务清单（按顺序执行）
 
-- [x] `cargo fmt`、`cargo test` 全通过。
-- [x] 关键提示文本不再出现阶段误标（抽样检查）。
+### 4.1 Stage 0：文档澄清定稿与拆解
 
-## 3. P1：常量与命名统一（减少硬编码与重复）
-
-目标：事件类型、文件名、默认路径、错误码 path label 的风格统一。
-
-- [x] 事件类型常量统一来源：
-  - 将 `run.prepared`、`vm.started`、`vm.exited`、`run.cleaned`、`run.failed`、`resource.sampled`、`compile` 等事件类型，像 mount.* 一样集中定义为常量，并在 runner/tests 中消灭硬编码字符串。
-  - 只允许一个权威来源（建议 sr-evidence 导出常量，runner/cli/compiler 引用）。
-- [x] “stage” 字段常量化：`compile` / `mount` / `launch` / `monitor` / `cleanup` 等 stage 名称避免散落字符串。
-- [x] artifacts 文件名常量集中：runner 的 artifacts 文件名常量保持集中定义并避免重复定义。
+- [x] 新增 `plan/M3/NETWORK_CLARIFICATIONS.md` 并固化已确认决策。
+- [x] 同步更新 `plan/M3/INTERFACES.md`（nft 链示例更正为 `forward`）与 `plan/M3/ARCHITECTURE.md`。
+- [x] 更新 `AGENTS.md`，索引 M3 澄清并补充检查项。
+- [x] 新增 `M3_STAGE_PLAN.md`，提供可执行的测试先行 Stage 拆分与验收口径。
 
 验收：
 
-- [x] 全仓 `grep` 硬编码事件字符串显著减少（只保留常量定义处/必要的序列化）。
-- [x] `cargo test` 全通过。
+- [x] 文档之间无自相矛盾表述；并且所有新增约束均落在 `plan/` 中（未定稿项明确标注“待确认”）。
 
-## 4. P2：错误处理范式统一（ErrorItem / path label / 错误码）
+### 4.2 Stage 1：sr-common 错误码 + sr-policy 网络规则校验（SR-POL-201）
 
-目标：所有模块返回错误的方式一致，可聚合、可测试、可追踪。
-
-- [x] 统一 ErrorItem.path 命名规则（例如：模块.子系统.动作 或 I-xxx 字段路径），并在 plan/ENGINEERING_CONVENTIONS.md 固化。
-- [x] 统一“错误码选择”与“人类可读 message”的风格：
-  - 校验错误（SR-POL-*）尽量指向具体字段路径（如 `mounts[i].source`）。
-  - 编译错误（SR-CMP-*）指向 compile 输出缺失/非法请求的路径（如 `mountPlan.enabled`）。
-  - 运行错误（SR-RUN-*）区分 preflight / mount / vm / cleanup 的 path 段。
-- [x] 消除重复的错误构造样板：在各模块内抽取 `error_helpers`（不跨模块塞逻辑）。
+- [ ] 先写测试：allowlist 缺失/空规则、非法 protocol/port、host|cidr 互斥规则。
+- [ ] 实现：新增网络校验模块并接入校验链；新增 M3 错误码常量。
 
 验收：
 
-- [x] 新增 1-2 个断言测试，确保错误 path 与 code 稳定。
-- [x] `cargo test` 全通过。
+- [ ] `cargo test -p sr-common -p sr-policy` 全绿。
+- [ ] 错误码与 path 精确到 `network.egress[i].<field>`（或 `network.egress`）。
 
-## 5. P3：模块职责再核对与文件拆分（降低耦合，提升可读性）
+### 4.3 Stage 2：sr-compiler networkPlan 生成（SR-CMP-201）+ 快照
 
-目标：每个 crate 只做自己该做的事；避免“同一能力多处实现”。
-
-- [x] sr-cli：只保留“参数解析 + I/O + 用户交互”；可复用纯逻辑下沉到对应 crate。
-- [x] sr-policy：path_security 只负责 allowlist + canonicalize；mount_constraints 只负责敏感路径/guest 规则；校验链保持单一入口。
-- [x] sr-compiler：mount_plan builder 与 evidencePlan/ensure_bundle_complete 职责边界明确。
-- [x] sr-runner：Runner 编排与 MountExecutor/rollback 交互保持单一路径，避免未来 M3 再造一套。
-- [x] sr-evidence：hashing/normalize/report_builder 的公共能力在 crate 内唯一来源；禁止 cli/runner 复制实现。
+- [ ] 先写测试：allowlist 编译输出包含非空 networkPlan；none 模式仍为 null；编译确定性。
+- [ ] 先写快照：新增 M3 allowlist 场景快照（不修改现有 none 快照）。
+- [ ] 实现：新增 `network_plan.rs` builder，并将其注入 `CompileBundle`。
 
 验收：
 
-- [x] 每个 crate 的入口文件可在 2-3 分钟内读懂（主流程清晰）。
-- [x] `cargo test` 全通过。
+- [ ] `cargo test -p sr-compiler` 全绿。
+- [ ] 新快照稳定（规则排序固定），且与 `plan/M3/INTERFACES.md` 对齐。
 
-## 6. P4：开发范式统一（测试、目录、命名、示例）
+### 4.4 Stage 3：sr-runner 网络生命周期（apply/release）+ 失败清理（SR-RUN-201/202）
 
-- [x] 测试组织统一：单测在 crate 内；跨 crate 行为验证在 `crates/*/tests`；顶层 `tests/` 仅放样例/快照与验收数据。
-- [x] 示例与样例命名统一：`m1_*.yaml`、`m2_*.yaml` 的策略文件命名规则明确并写入 README/plan。
-- [x] 文档回链：README 与 plan/ 索引保持一致，避免过期阶段说明。
+- [ ] 先写测试（mock/recording）：apply 失败/cleanup 失败/异常路径均能回收，并返回正确错误码。
+- [ ] 实现：新增 `network_lifecycle.rs`，在 runner 生命周期织入 apply/release。
 
 验收：
 
-- [x] README 命令示例与当前 CLI 一致。
-- [x] `cargo test` 全通过。
+- [ ] `cargo test -p sr-runner` 全绿。
+- [ ] network 相关事件写入遵守 evidencePlan gating（不在事件列表则不写）。
 
-## 7. 执行顺序建议
+### 4.5 Stage 4：证据链与报告 networkAudit（additive）
 
-1) P0（文案/注释） → 2) P1（常量统一） → 3) P2（错误范式） → 4) P3（拆分与职责） → 5) P4（测试/示例/文档）
+- [ ] 先写测试：从事件流聚合 `networkAudit`；并验证 `integrity.digest` 可复算。
+- [ ] 实现：`sr-evidence` 增量扩展 RunReport；`sr-cli` 报告组装补齐 networkAudit。
 
-## 附：已发现的“统一点候选”（用于落任务时逐项勾选）
+验收：
 
-- [x] 事件类型字符串在 sr-runner 与测试中多处硬编码，建议集中常量化。
-- [x] 部分提示文本仍含 “M0/M1 only supports …” 的过期表述，需与“网络固定 none（M0-M2）”对齐。
-- [x] CLI about 仍写 “M1 CLI”，与当前能力不一致。
+- [ ] `cargo test -p sr-evidence -p sr-cli` 全绿。
+
+### 4.6 Stage 5（待确认后再做）：`network.rule.hit` 命中语义与采集
+
+- [ ] 先在 `plan/` 定稿：`network.rule.hit` payload schema、统计口径、`networkAudit` 在 `mode=none` 时的输出策略。
+- [ ] 定稿后：补齐 runner 采样逻辑与证据/报告聚合测试。
+
+验收：
+
+- [ ] `cargo test` 全绿，且命中统计与 `networkAudit` 一致。
+
+### 4.7 Stage 6（可选）：真实可出网闭环（kernel boot args 优先）
+
+- [ ] 在具备权限的 Linux 主机手工验收：TAP + nft + NAT/路由 + guest IP 配置闭环。
+- [ ] 新增 `#[ignore]` 集成测试（默认不跑），并在文档中写明环境与依赖命令。
+
+验收：
+
+- [ ] 目标环境可复现：allowlist 目标可达、非 allowlist 目标不可达、命中可审计、异常退出后规则可回收。

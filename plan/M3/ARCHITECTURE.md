@@ -19,6 +19,7 @@
 - 默认拒绝所有外连。
 - 仅按显式 allowlist 开放流量。
 - 网络控制与 runId 强绑定，避免跨运行污染。
+- nftables 规则默认挂载在 `forward` 链，并按 TAP 设备与 runId 做隔离（细则见 `plan/M3/NETWORK_CLARIFICATIONS.md`）。
 
 ## 4. 运维要求
 

@@ -33,6 +33,11 @@
 - 一旦决定采纳某条规则/约束，必须将其写入 `plan/`（必要时在对应阶段目录新增 `*_CLARIFICATIONS.md` / `*_RULES.md`），并在 `plan/Mx/REFERENCES.md` 中记录参考来源或关键词。
 - 写入 `plan/` 后，该结论才成为后续实现与验收的唯一事实来源。
 
+已固化的澄清文档（示例，非穷举）：
+
+- M2：`plan/M2/MOUNT_CLARIFICATIONS.md`
+- M3：`plan/M3/NETWORK_CLARIFICATIONS.md`
+
 ## 阶段能力边界（不得越权）
 
 - M0：只允许 `validate` + `compile --dry-run`，不得进入真实 microVM 执行。
@@ -40,6 +45,17 @@
 - M2：强化挂载与路径安全；仍不得引入联网能力。
 - M3：才允许 `network.mode=allowlist` 与 `networkPlan` 实际生效。
 - M4：以交付、验证、归档为主，不新增高风险底层能力。
+
+## M3 已确认澄清（2026-02-09）
+
+> 本节仅记录“澄清已写入 plan/ 的索引”，避免实现/测试绕过定稿约束。
+> 具体细则以 `plan/M3/NETWORK_CLARIFICATIONS.md` 为准。
+
+- `network.mode=none` 时 `CompileBundle.networkPlan` 必须为 `null`（保持 M0-M2 口径与快照兼容）。
+- allowlist 规则：`tcp|udp`、`port(1..=65535)` 必填、`host|cidr` 二选一、IPv4-only。
+- `host` 允许运行期解析（runner apply 阶段解析 A 记录），compile 阶段不得解析。
+- nftables 规则主链采用 `forward`（已同步更新 `plan/M3/INTERFACES.md` 示例与 `plan/M3/ARCHITECTURE.md`）。
+- “真实可出网闭环（含 guest IP 配置）”作为可选项，优先通过 kernel boot args 提供更灵活定制（需先在 `plan/` 定稿后实现）。
 
 ## M0/M1 验收经验沉淀（影响后续任务，强制遵守）
 
@@ -93,6 +109,7 @@
 在提交任何代码/文档前，必须自检：
 
 - [ ] 已读取全局与对应阶段文档
+- [ ] （若任务属于 M3）已读取 `plan/M3/NETWORK_CLARIFICATIONS.md`
 - [ ] 变更未突破阶段能力边界
 - [ ] 变更未破坏接口兼容性（仅 additive）
 - [ ] 模块职责未漂移
