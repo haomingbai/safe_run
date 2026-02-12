@@ -23,6 +23,13 @@ pub(crate) const EVENT_RUN_PREPARED: &str = sr_evidence::EVENT_RUN_PREPARED;
 pub(crate) const EVENT_MOUNT_VALIDATED: &str = sr_evidence::EVENT_MOUNT_VALIDATED;
 pub(crate) const EVENT_MOUNT_REJECTED: &str = sr_evidence::EVENT_MOUNT_REJECTED;
 pub(crate) const EVENT_MOUNT_APPLIED: &str = sr_evidence::EVENT_MOUNT_APPLIED;
+pub(crate) const EVENT_NETWORK_PLAN_GENERATED: &str = sr_evidence::EVENT_NETWORK_PLAN_GENERATED;
+pub(crate) const EVENT_NETWORK_RULE_APPLIED: &str = sr_evidence::EVENT_NETWORK_RULE_APPLIED;
+#[allow(dead_code)]
+pub(crate) const EVENT_NETWORK_RULE_HIT: &str = sr_evidence::EVENT_NETWORK_RULE_HIT;
+pub(crate) const EVENT_NETWORK_RULE_RELEASED: &str = sr_evidence::EVENT_NETWORK_RULE_RELEASED;
+pub(crate) const EVENT_NETWORK_RULE_CLEANUP_FAILED: &str =
+    sr_evidence::EVENT_NETWORK_RULE_CLEANUP_FAILED;
 pub(crate) const EVENT_VM_STARTED: &str = sr_evidence::EVENT_VM_STARTED;
 pub(crate) const EVENT_RESOURCE_SAMPLED: &str = sr_evidence::EVENT_RESOURCE_SAMPLED;
 pub(crate) const EVENT_VM_EXITED: &str = sr_evidence::EVENT_VM_EXITED;

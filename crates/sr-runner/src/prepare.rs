@@ -43,6 +43,8 @@ pub(crate) fn prepare_run(
         event_stream: vec![EVENTS_FILE.to_string()],
         launch_plan,
         mount_plan: compile_bundle.mount_plan.clone(),
+        network_plan: compile_bundle.network_plan.clone(),
+        applied_network: None,
         evidence_plan: compile_bundle.evidence_plan.clone(),
         workdir_path,
         artifacts_dir_path,

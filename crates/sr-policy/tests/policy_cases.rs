@@ -1,4 +1,4 @@
-use sr_common::{SR_POL_001, SR_POL_002, SR_POL_003, SR_POL_103};
+use sr_common::{SR_POL_001, SR_POL_002, SR_POL_103, SR_POL_201};
 use sr_policy::{load_policy_from_path, validate_policy};
 use std::path::PathBuf;
 
@@ -19,14 +19,15 @@ fn valid_case_passes() {
 }
 
 #[test]
-fn invalid_case_rejects_allowlist() {
+fn invalid_case_rejects_allowlist_without_egress() {
     let policy = load_policy_from_path(&repo_file(
         "tests/policy_invalid_cases/network_allowlist.yaml",
     ))
     .expect("load invalid policy");
     let result = validate_policy(policy);
     assert!(!result.valid);
-    assert!(result.errors.iter().any(|e| e.code == SR_POL_003));
+    assert!(result.errors.iter().any(|e| e.code == SR_POL_201));
+    assert!(result.errors.iter().any(|e| e.path == "network.egress"));
 }
 
 #[test]

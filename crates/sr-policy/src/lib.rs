@@ -1,10 +1,12 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sr_common::{ErrorItem, SR_POL_001, SR_POL_002, SR_POL_003, SR_POL_103};
+use sr_common::{ErrorItem, SR_POL_001, SR_POL_002, SR_POL_103};
 
 mod mount_constraints;
+mod network_constraints;
 mod path_security;
 use mount_constraints::MountConstraints;
+use network_constraints::validate_network_constraints;
 use path_security::PathSecurityEngine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +51,8 @@ pub struct Memory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Network {
     pub mode: NetworkMode,
+    #[serde(default)]
+    pub egress: Vec<NetworkEgressRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,6 +60,18 @@ pub struct Network {
 pub enum NetworkMode {
     None,
     Allowlist,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkEgressRule {
+    #[serde(default)]
+    pub protocol: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub cidr: Option<String>,
+    #[serde(default)]
+    pub port: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,8 +131,8 @@ pub fn validate_policy(policy: PolicySpec) -> ValidationResult {
 }
 
 /// Validate policy semantics and emit normalized policy on success.
-/// Boundary: M0-M2 only supports `network.mode=none`; mounts must pass allowlist + constraint checks.
-/// Error mapping: `SR-POL-001/002/003/101/102/103` with field-oriented `path`.
+/// Boundary: M3 allows `network.mode=allowlist`; mounts still pass allowlist + constraint checks.
+/// Error mapping: `SR-POL-001/002/101/102/103/201` with field-oriented `path`.
 pub fn validate_policy_with_allowlist(
     mut policy: PolicySpec,
     allowlist_path: Option<&str>,
@@ -177,13 +193,7 @@ pub fn validate_policy_with_allowlist(
         ));
     }
 
-    if policy.network.mode != NetworkMode::None {
-        errors.push(pol_error(
-            SR_POL_003,
-            "network.mode",
-            "M0-M2 only supports network.mode=none",
-        ));
-    }
+    errors.extend(validate_network_constraints(&policy.network));
 
     for (idx, mount) in policy.mounts.iter().enumerate() {
         let mut source_valid = true;
@@ -268,9 +278,10 @@ pub fn validate_policy_with_allowlist(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sr_common::SR_POL_201;
 
     #[test]
-    fn validate_allowlist_is_rejected_in_m0() {
+    fn validate_allowlist_without_egress_is_rejected() {
         let policy = PolicySpec {
             api_version: "policy.safe-run.dev/v1alpha1".to_string(),
             metadata: Metadata {
@@ -290,6 +301,7 @@ mod tests {
             },
             network: Network {
                 mode: NetworkMode::Allowlist,
+                egress: vec![],
             },
             mounts: vec![],
             audit: Audit {
@@ -299,7 +311,8 @@ mod tests {
 
         let result = validate_policy(policy);
         assert!(!result.valid);
-        assert_eq!(result.errors[0].code, SR_POL_003);
+        assert!(result.errors.iter().any(|err| err.code == SR_POL_201));
+        assert!(result.errors.iter().any(|err| err.path == "network.egress"));
     }
 }
 

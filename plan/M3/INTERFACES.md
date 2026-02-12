@@ -18,6 +18,7 @@ network:
 
 约束：
 
+- `mode=none` 时不得提供 `egress` 规则；若 `network.egress` 非空应返回 `SR-POL-201`（`path=network.egress`）。
 - `mode=allowlist` 时必须提供至少一条规则。
 - 仅允许显式定义的协议/目标/端口组合。
 - M3 定稿细则（详见 `plan/M3/NETWORK_CLARIFICATIONS.md`）：

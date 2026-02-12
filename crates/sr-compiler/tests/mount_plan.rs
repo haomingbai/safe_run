@@ -24,6 +24,7 @@ fn compile_includes_mount_plan_in_order() {
         },
         network: Network {
             mode: NetworkMode::None,
+            egress: vec![],
         },
         mounts: vec![
             Mount {

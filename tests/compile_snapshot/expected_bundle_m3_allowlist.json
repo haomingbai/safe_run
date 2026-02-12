@@ -1,0 +1,73 @@
+{
+  "firecrackerConfig": {
+    "boot-source": {
+      "boot_args": "console=ttyS0 reboot=k panic=1 pci=off",
+      "kernel_image_path": "artifacts/vmlinux"
+    },
+    "drives": [],
+    "machine-config": {
+      "mem_size_mib": 256,
+      "smt": false,
+      "vcpu_count": 1
+    },
+    "rootfs": {
+      "path": "artifacts/rootfs.ext4",
+      "readOnly": true
+    }
+  },
+  "jailerPlan": {
+    "enabled": true,
+    "ops": [
+      "prepare_jailer_context"
+    ]
+  },
+  "cgroupPlan": {
+    "enabled": true,
+    "ops": [
+      "set_cpu_max=100000 100000",
+      "set_memory_max=256Mi"
+    ]
+  },
+  "mountPlan": {
+    "enabled": true,
+    "mounts": []
+  },
+  "networkPlan": {
+    "tap": {
+      "name": "sr-tap-<runId>"
+    },
+    "nft": {
+      "table": "safe_run",
+      "chains": [
+        "forward"
+      ],
+      "rules": [
+        {
+          "protocol": "tcp",
+          "host": "api.example.com",
+          "port": 443
+        },
+        {
+          "protocol": "udp",
+          "cidr": "1.1.1.1/32",
+          "port": 53
+        }
+      ]
+    }
+  },
+  "evidencePlan": {
+    "enabled": true,
+    "events": [
+      "compile",
+      "run.prepared",
+      "mount.validated",
+      "mount.rejected",
+      "mount.applied",
+      "vm.started",
+      "resource.sampled",
+      "vm.exited",
+      "run.cleaned",
+      "run.failed"
+    ]
+  }
+}

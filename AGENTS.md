@@ -52,6 +52,7 @@
 > 具体细则以 `plan/M3/NETWORK_CLARIFICATIONS.md` 为准。
 
 - `network.mode=none` 时 `CompileBundle.networkPlan` 必须为 `null`（保持 M0-M2 口径与快照兼容）。
+- `network.mode=none` 时若检测到非空 `network.egress[]`，必须返回 `SR-POL-201`（`path=network.egress`）。
 - allowlist 规则：`tcp|udp`、`port(1..=65535)` 必填、`host|cidr` 二选一、IPv4-only。
 - `host` 允许运行期解析（runner apply 阶段解析 A 记录），compile 阶段不得解析。
 - nftables 规则主链采用 `forward`（已同步更新 `plan/M3/INTERFACES.md` 示例与 `plan/M3/ARCHITECTURE.md`）。

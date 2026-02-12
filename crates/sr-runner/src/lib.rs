@@ -5,6 +5,7 @@ mod launch;
 mod model;
 mod monitor;
 mod mount_executor;
+mod network_lifecycle;
 mod prepare;
 mod rollback;
 mod runner;
@@ -13,6 +14,10 @@ mod utils;
 pub use model::{
     CommandSpec, LaunchPlan, MonitorResult, PreparedRun, RunArtifacts, RunState,
     RunnerControlRequest, RunnerControlResponse, RunnerRuntime, RuntimeContext,
+};
+pub use network_lifecycle::{
+    AppliedNetwork, AppliedNetworkRule, NetworkLifecycle, NetworkLifecycleError,
+    SystemNetworkLifecycle,
 };
 pub use runner::Runner;
 

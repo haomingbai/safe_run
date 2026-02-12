@@ -39,34 +39,34 @@
 
 ### 4.2 Stage 1：sr-common 错误码 + sr-policy 网络规则校验（SR-POL-201）
 
-- [ ] 先写测试：allowlist 缺失/空规则、非法 protocol/port、host|cidr 互斥规则。
-- [ ] 实现：新增网络校验模块并接入校验链；新增 M3 错误码常量。
+- [x] 先写测试：allowlist 缺失/空规则、非法 protocol/port、host|cidr 互斥规则；`mode=none` + 非空 `egress` 直接报错。
+- [x] 实现：新增网络校验模块并接入校验链；新增 M3 错误码常量。
 
 验收：
 
-- [ ] `cargo test -p sr-common -p sr-policy` 全绿。
-- [ ] 错误码与 path 精确到 `network.egress[i].<field>`（或 `network.egress`）。
+- [x] `cargo test -p sr-common -p sr-policy` 全绿。
+- [x] 错误码与 path 精确到 `network.egress[i].<field>`（或 `network.egress`）。
 
 ### 4.3 Stage 2：sr-compiler networkPlan 生成（SR-CMP-201）+ 快照
 
-- [ ] 先写测试：allowlist 编译输出包含非空 networkPlan；none 模式仍为 null；编译确定性。
-- [ ] 先写快照：新增 M3 allowlist 场景快照（不修改现有 none 快照）。
-- [ ] 实现：新增 `network_plan.rs` builder，并将其注入 `CompileBundle`。
+- [x] 先写测试：allowlist 编译输出包含非空 networkPlan；none 模式仍为 null；编译确定性。
+- [x] 先写快照：新增 M3 allowlist 场景快照（不修改现有 none 快照）。
+- [x] 实现：新增 `network_plan.rs` builder，并将其注入 `CompileBundle`。
 
 验收：
 
-- [ ] `cargo test -p sr-compiler` 全绿。
-- [ ] 新快照稳定（规则排序固定），且与 `plan/M3/INTERFACES.md` 对齐。
+- [x] `cargo test -p sr-compiler` 全绿。
+- [x] 新快照稳定（规则排序固定），且与 `plan/M3/INTERFACES.md` 对齐。
 
 ### 4.4 Stage 3：sr-runner 网络生命周期（apply/release）+ 失败清理（SR-RUN-201/202）
 
-- [ ] 先写测试（mock/recording）：apply 失败/cleanup 失败/异常路径均能回收，并返回正确错误码。
-- [ ] 实现：新增 `network_lifecycle.rs`，在 runner 生命周期织入 apply/release。
+- [x] 先写测试（mock/recording）：apply 失败/cleanup 失败/异常路径均能回收，并返回正确错误码。
+- [x] 实现：新增 `network_lifecycle.rs`，在 runner 生命周期织入 apply/release。
 
 验收：
 
-- [ ] `cargo test -p sr-runner` 全绿。
-- [ ] network 相关事件写入遵守 evidencePlan gating（不在事件列表则不写）。
+- [x] `cargo test -p sr-runner` 全绿。
+- [x] network 相关事件写入遵守 evidencePlan gating（不在事件列表则不写）。
 
 ### 4.5 Stage 4：证据链与报告 networkAudit（additive）
 

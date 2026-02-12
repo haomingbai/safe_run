@@ -1,0 +1,23 @@
+apiVersion: policy.safe-run.dev/v1alpha1
+metadata:
+  name: demo-job-allowlist
+runtime:
+  command: /bin/echo
+  args: ["hello"]
+resources:
+  cpu:
+    max: "100000 100000"
+  memory:
+    max: 256Mi
+network:
+  mode: allowlist
+  egress:
+    - protocol: tcp
+      host: api.example.com
+      port: 443
+    - protocol: udp
+      cidr: 1.1.1.1/32
+      port: 53
+mounts: []
+audit:
+  level: basic

@@ -37,14 +37,16 @@ network:
 
 ### 3.2 allowlist 规则语义（M3 定稿）
 
-1. `mode=allowlist` 时必须提供至少一条规则：`network.egress` 非空数组。
+1. `mode=none` 时不得提供任何 `network.egress[]` 规则（即必须为空或省略）。
+   - 若检测到非空 `network.egress[]`：`SR-POL-201`，`path=network.egress`。
+2. `mode=allowlist` 时必须提供至少一条规则：`network.egress` 非空数组。
    - 违反时：`SR-POL-201`，`path=network.egress`。
-2. 协议集合：仅允许 `tcp|udp`（M3 不引入其它协议）。
-3. 端口：`port` 必填，范围 `1..=65535`。
-4. 目标二选一：每条规则必须且只能提供 `host` 或 `cidr` 之一：
+3. 协议集合：仅允许 `tcp|udp`（M3 不引入其它协议）。
+4. 端口：`port` 必填，范围 `1..=65535`。
+5. 目标二选一：每条规则必须且只能提供 `host` 或 `cidr` 之一：
    - `host`：域名（运行期解析）。
    - `cidr`：IPv4 CIDR（例如 `1.2.3.4/32`）。
-5. IPv4-only：M3 仅支持 IPv4；IPv6 作为后续阶段扩展项（见 `TODO.md` / `M3_STAGE_PLAN.md`）。
+6. IPv4-only：M3 仅支持 IPv4；IPv6 作为后续阶段扩展项（见 `TODO.md` / `M3_STAGE_PLAN.md`）。
 
 校验错误统一映射为：`SR-POL-201`，并将 `path` 精确指向 `network.egress[i].<field>`。
 
@@ -123,4 +125,3 @@ network:
 1. `network.rule.hit` 的 payload schema（逐包事件 vs 计数器采样、字段名与聚合口径）。
 2. `networkAudit` 在 `mode=none` 时的输出策略（字段是否总是存在、默认值口径）。
 3. allowlist “命中/拦截”的精确定义与规则优先级（尤其是 host 多 IP 展开后的计数聚合方式）。
-4. 当 `network.mode=none` 但用户仍提供了 `network.egress[]` 时的处理策略（忽略 / 警告 / 直接拒绝）。

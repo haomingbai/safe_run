@@ -99,3 +99,49 @@ fn compile_output_is_deterministic() {
         serde_json::to_string_pretty(&bundle_second).expect("serialize second bundle");
     assert_eq!(first_json, second_json);
 }
+
+#[test]
+fn compile_allowlist_output_matches_m3_snapshot() {
+    let policy = load_policy_from_path(&repo_file(
+        "tests/compile_snapshot/m3_allowlist_policy.yaml",
+    ))
+    .expect("load allowlist policy for compile");
+    let validated = validate_policy(policy);
+    assert!(validated.valid, "validation failed: {:?}", validated.errors);
+
+    let bundle = compile_dry_run(
+        &validated
+            .normalized_policy
+            .expect("normalized policy on valid validation"),
+    )
+    .expect("compile dry run should succeed");
+
+    let actual = serde_json::to_string_pretty(&bundle).expect("serialize compile bundle");
+    let expected = std::fs::read_to_string(repo_file(
+        "tests/compile_snapshot/expected_bundle_m3_allowlist.json",
+    ))
+    .expect("read expected m3 allowlist bundle snapshot");
+
+    assert_eq!(actual.trim(), expected.trim());
+}
+
+#[test]
+fn compile_allowlist_output_is_deterministic() {
+    let policy = load_policy_from_path(&repo_file(
+        "tests/compile_snapshot/m3_allowlist_policy.yaml",
+    ))
+    .expect("load allowlist policy for deterministic compile");
+    let validated = validate_policy(policy);
+    assert!(validated.valid, "validation failed: {:?}", validated.errors);
+
+    let normalized = validated
+        .normalized_policy
+        .expect("normalized policy on valid validation");
+    let bundle_first = compile_dry_run(&normalized).expect("first compile should succeed");
+    let bundle_second = compile_dry_run(&normalized).expect("second compile should succeed");
+
+    let first_json = serde_json::to_string_pretty(&bundle_first).expect("serialize first bundle");
+    let second_json =
+        serde_json::to_string_pretty(&bundle_second).expect("serialize second bundle");
+    assert_eq!(first_json, second_json);
+}

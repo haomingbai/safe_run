@@ -2,8 +2,9 @@ use crate::constants::{
     CLEANUP_MARKER_FILE, DEFAULT_CGROUP_PATH, DEFAULT_SAMPLE_INTERVAL_MS,
     FIRECRACKER_API_SOCKET_FILE, FIRECRACKER_CONFIG_FILE, RUNTIME_CONTEXT_FILE, VM_PID_FILE,
 };
+use crate::network_lifecycle::AppliedNetwork;
 use serde::{Deserialize, Serialize};
-use sr_compiler::{CompileBundle, EvidencePlan, MountPlan};
+use sr_compiler::{CompileBundle, EvidencePlan, MountPlan, NetworkPlan};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -112,6 +113,8 @@ pub struct PreparedRun {
     pub event_stream: Vec<String>,
     pub launch_plan: LaunchPlan,
     pub mount_plan: MountPlan,
+    pub network_plan: Option<NetworkPlan>,
+    pub applied_network: Option<AppliedNetwork>,
     pub evidence_plan: EvidencePlan,
     pub(crate) workdir_path: PathBuf,
     pub(crate) artifacts_dir_path: PathBuf,

@@ -61,6 +61,7 @@ fn base_policy_with_mount_target(source: &str, target: &str) -> PolicySpec {
         },
         network: Network {
             mode: NetworkMode::None,
+            egress: vec![],
         },
         mounts: vec![Mount {
             source: source.to_string(),

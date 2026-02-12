@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sr_common::{ErrorItem, SR_CMP_001, SR_CMP_002};
+use sr_common::{ErrorItem, SR_CMP_001, SR_CMP_002, SR_CMP_201};
 use sr_evidence::REQUIRED_EVIDENCE_EVENTS;
 use sr_policy::{NetworkMode, PolicySpec};
 
 mod mount_plan;
+mod network_plan;
 use mount_plan::MountPlanBuilder;
 pub use mount_plan::{MountPlan, MountPlanEntry};
+use network_plan::NetworkPlanBuilder;
+pub use network_plan::{NetworkPlan, NftPlan, NftRule, TapPlan};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileBundle {
@@ -19,7 +22,7 @@ pub struct CompileBundle {
     #[serde(rename = "mountPlan")]
     pub mount_plan: MountPlan,
     #[serde(rename = "networkPlan")]
-    pub network_plan: Option<serde_json::Value>,
+    pub network_plan: Option<NetworkPlan>,
     #[serde(rename = "evidencePlan")]
     pub evidence_plan: EvidencePlan,
 }
@@ -37,20 +40,13 @@ pub struct EvidencePlan {
 }
 
 /// Compile a validated `PolicySpec` into a deterministic `CompileBundle`.
-/// Boundary: M0-M2 only allows `network.mode=none`; `networkPlan` must remain null.
-/// Error mapping: `SR-CMP-001` for template mapping failures, `SR-CMP-002` for invalid request/output.
+/// Boundary: M3 allows `network.mode=allowlist`; `networkPlan` must be null for none and non-null for allowlist.
+/// Error mapping: `SR-CMP-001` for template mapping failures, `SR-CMP-002` for invalid request/output, `SR-CMP-201` for network plan failures.
 pub fn compile_dry_run(policy: &PolicySpec) -> Result<CompileBundle, ErrorItem> {
     if policy.runtime.command.trim().is_empty() {
         return Err(cmp_error(
             "runtime.command",
             "runtime.command is empty after normalization",
-        ));
-    }
-
-    if policy.network.mode != NetworkMode::None {
-        return Err(cmp_error(
-            "network.mode",
-            "M0-M2 compile only supports network.mode=none",
         ));
     }
 
@@ -79,6 +75,7 @@ pub fn compile_dry_run(policy: &PolicySpec) -> Result<CompileBundle, ErrorItem> 
     });
 
     let mount_plan = MountPlanBuilder::build(&policy.mounts);
+    let network_plan = NetworkPlanBuilder::build(&policy.network)?;
 
     let bundle = CompileBundle {
         firecracker_config,
@@ -94,13 +91,13 @@ pub fn compile_dry_run(policy: &PolicySpec) -> Result<CompileBundle, ErrorItem> 
             ],
         },
         mount_plan,
-        network_plan: None,
+        network_plan,
         evidence_plan: EvidencePlan {
             enabled: true,
             events: required_evidence_events(),
         },
     };
-    ensure_bundle_complete(&bundle)?;
+    ensure_bundle_complete(&bundle, &policy.network.mode)?;
     Ok(bundle)
 }
 
@@ -117,7 +114,10 @@ fn memory_to_mib(memory: &str) -> Option<u64> {
     None
 }
 
-fn ensure_bundle_complete(bundle: &CompileBundle) -> Result<(), ErrorItem> {
+fn ensure_bundle_complete(
+    bundle: &CompileBundle,
+    network_mode: &NetworkMode,
+) -> Result<(), ErrorItem> {
     if bundle.firecracker_config.get("machine-config").is_none() {
         return Err(cmp_error(
             "firecrackerConfig.machine-config",
@@ -167,11 +167,29 @@ fn ensure_bundle_complete(bundle: &CompileBundle) -> Result<(), ErrorItem> {
         ));
     }
 
-    if bundle.network_plan.is_some() {
-        return Err(cmp_error(
-            "networkPlan",
-            "M0-M2 compile output must keep networkPlan as null",
-        ));
+    match network_mode {
+        NetworkMode::None => {
+            if bundle.network_plan.is_some() {
+                return Err(cmp_error(
+                    "networkPlan",
+                    "compile output must keep networkPlan as null when network.mode=none",
+                ));
+            }
+        }
+        NetworkMode::Allowlist => {
+            let plan = bundle.network_plan.as_ref().ok_or_else(|| {
+                cmp_network_error(
+                    "networkPlan",
+                    "compile output must provide networkPlan when network.mode=allowlist",
+                )
+            })?;
+            if !plan.nft.chains.iter().any(|chain| chain == "forward") {
+                return Err(cmp_network_error(
+                    "networkPlan.nft.chains",
+                    "networkPlan must include nft forward chain",
+                ));
+            }
+        }
     }
 
     if bundle.evidence_plan.events.is_empty() {
@@ -214,6 +232,10 @@ fn cmp_error(path: impl Into<String>, message: impl Into<String>) -> ErrorItem {
     ErrorItem::new(SR_CMP_002, path, message)
 }
 
+fn cmp_network_error(path: impl Into<String>, message: impl Into<String>) -> ErrorItem {
+    ErrorItem::new(SR_CMP_201, path, message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +262,7 @@ mod tests {
             },
             network: Network {
                 mode: NetworkMode::None,
+                egress: vec![],
             },
             mounts: vec![],
             audit: Audit {
@@ -252,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_rejects_allowlist_network() {
+    fn compile_allowlist_network_generates_plan() {
         let policy = PolicySpec {
             api_version: "policy.safe-run.dev/v1alpha1".to_string(),
             metadata: Metadata {
@@ -272,6 +295,12 @@ mod tests {
             },
             network: Network {
                 mode: NetworkMode::Allowlist,
+                egress: vec![sr_policy::NetworkEgressRule {
+                    protocol: Some("tcp".to_string()),
+                    host: Some("api.example.com".to_string()),
+                    cidr: None,
+                    port: Some(443),
+                }],
             },
             mounts: vec![],
             audit: Audit {
@@ -279,9 +308,14 @@ mod tests {
             },
         };
 
-        let err = compile_dry_run(&policy).expect_err("allowlist must fail in M0-M2 compile");
-        assert_eq!(err.code, SR_CMP_002);
-        assert_eq!(err.path, "network.mode");
+        let bundle = compile_dry_run(&policy).expect("allowlist should compile in M3");
+        let network_plan = bundle
+            .network_plan
+            .expect("allowlist compile output should include network plan");
+        assert_eq!(network_plan.tap.name, "sr-tap-<runId>");
+        assert_eq!(network_plan.nft.table, "safe_run");
+        assert_eq!(network_plan.nft.chains, vec!["forward".to_string()]);
+        assert_eq!(network_plan.nft.rules.len(), 1);
     }
 
     #[test]
@@ -305,6 +339,7 @@ mod tests {
             },
             network: Network {
                 mode: NetworkMode::None,
+                egress: vec![],
             },
             mounts: vec![],
             audit: Audit {
@@ -337,6 +372,7 @@ mod tests {
             },
             network: Network {
                 mode: NetworkMode::None,
+                egress: vec![],
             },
             mounts: vec![],
             audit: Audit {
@@ -376,13 +412,15 @@ mod tests {
             },
         };
 
-        let err = ensure_bundle_complete(&bundle).expect_err("missing machine-config must fail");
+        let err = ensure_bundle_complete(&bundle, &NetworkMode::None)
+            .expect_err("missing machine-config must fail");
         assert_eq!(err.code, SR_CMP_002);
 
         bundle.firecracker_config = json!({
             "machine-config": {"vcpu_count": 1, "mem_size_mib": 128, "smt": false}
         });
-        let err = ensure_bundle_complete(&bundle).expect_err("missing boot-source must fail");
+        let err = ensure_bundle_complete(&bundle, &NetworkMode::None)
+            .expect_err("missing boot-source must fail");
         assert_eq!(err.code, SR_CMP_002);
     }
 
@@ -415,7 +453,52 @@ mod tests {
             },
         };
 
-        let err = ensure_bundle_complete(&bundle).expect_err("missing evidence events must fail");
+        let err = ensure_bundle_complete(&bundle, &NetworkMode::None)
+            .expect_err("missing evidence events must fail");
         assert_eq!(err.code, SR_CMP_002);
+    }
+
+    #[test]
+    fn ensure_bundle_complete_requires_network_plan_for_allowlist() {
+        let bundle = CompileBundle {
+            firecracker_config: json!({
+                "machine-config": {
+                    "vcpu_count": 1,
+                    "mem_size_mib": 128,
+                    "smt": false
+                },
+                "boot-source": {
+                    "kernel_image_path": "artifacts/vmlinux",
+                    "boot_args": "console=ttyS0"
+                },
+                "rootfs": {
+                    "path": "artifacts/rootfs.ext4",
+                    "readOnly": true
+                },
+                "drives": []
+            }),
+            jailer_plan: Plan {
+                enabled: true,
+                ops: vec!["prepare_jailer_context".to_string()],
+            },
+            cgroup_plan: Plan {
+                enabled: true,
+                ops: vec!["set_cpu_max=100000 100000".to_string()],
+            },
+            mount_plan: MountPlan {
+                enabled: true,
+                mounts: vec![],
+            },
+            network_plan: None,
+            evidence_plan: EvidencePlan {
+                enabled: true,
+                events: required_evidence_events(),
+            },
+        };
+
+        let err = ensure_bundle_complete(&bundle, &NetworkMode::Allowlist)
+            .expect_err("allowlist compile output must include network plan");
+        assert_eq!(err.code, SR_CMP_201);
+        assert_eq!(err.path, "networkPlan");
     }
 }

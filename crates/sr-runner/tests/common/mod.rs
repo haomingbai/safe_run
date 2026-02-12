@@ -164,6 +164,7 @@ fn sample_policy() -> PolicySpec {
         },
         network: Network {
             mode: NetworkMode::None,
+            egress: vec![],
         },
         mounts: vec![],
         audit: Audit {

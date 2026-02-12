@@ -679,6 +679,7 @@ mod tests {
             },
             network: Network {
                 mode: NetworkMode::None,
+                egress: vec![],
             },
             mounts: vec![],
             audit: Audit {

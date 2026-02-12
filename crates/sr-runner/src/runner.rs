@@ -1,7 +1,9 @@
 use crate::cleanup::cleanup_run;
 use crate::constants::{
-    EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED, EVENT_RUN_FAILED,
-    EVENT_RUN_PREPARED, EVENT_VM_STARTED, STAGE_CLEANUP, STAGE_LAUNCH, STAGE_MOUNT, STAGE_PREPARE,
+    EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED, EVENT_NETWORK_PLAN_GENERATED,
+    EVENT_NETWORK_RULE_APPLIED, EVENT_NETWORK_RULE_CLEANUP_FAILED, EVENT_NETWORK_RULE_RELEASED,
+    EVENT_RUN_FAILED, EVENT_RUN_PREPARED, EVENT_VM_STARTED, STAGE_CLEANUP, STAGE_LAUNCH,
+    STAGE_MOUNT, STAGE_PREPARE,
 };
 use crate::event::write_event;
 use crate::model::{
@@ -12,9 +14,10 @@ use crate::monitor::monitor_run;
 use crate::mount_executor::{
     MountEventHooks, MountExecutor, SystemMountApplier, SystemMountRollbacker,
 };
+use crate::network_lifecycle::{NetworkLifecycle, SystemNetworkLifecycle};
 use crate::prepare::prepare_run;
 use serde_json::json;
-use sr_common::{ErrorItem, SR_RUN_001, SR_RUN_002, SR_RUN_101};
+use sr_common::{ErrorItem, SR_RUN_001, SR_RUN_002, SR_RUN_101, SR_RUN_201, SR_RUN_202};
 use std::env;
 use std::fs;
 #[cfg(unix)]
@@ -25,6 +28,7 @@ use std::process::Command;
 pub struct Runner {
     runtime: RunnerRuntime,
     mount_executor: MountExecutor,
+    network_lifecycle: Box<dyn NetworkLifecycle>,
 }
 
 impl Default for Runner {
@@ -39,6 +43,7 @@ impl Runner {
         Self {
             runtime: RunnerRuntime::default(),
             mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
+            network_lifecycle: Box::new(SystemNetworkLifecycle),
         }
     }
 
@@ -47,6 +52,7 @@ impl Runner {
         Self {
             runtime,
             mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
+            network_lifecycle: Box::new(SystemNetworkLifecycle),
         }
     }
 
@@ -55,6 +61,32 @@ impl Runner {
         Self {
             runtime,
             mount_executor,
+            network_lifecycle: Box::new(SystemNetworkLifecycle),
+        }
+    }
+
+    /// Create a runner with custom mount and network lifecycle adapters (used for tests).
+    pub fn with_mount_and_network_lifecycle<N: NetworkLifecycle + 'static>(
+        runtime: RunnerRuntime,
+        mount_executor: MountExecutor,
+        network_lifecycle: N,
+    ) -> Self {
+        Self {
+            runtime,
+            mount_executor,
+            network_lifecycle: Box::new(network_lifecycle),
+        }
+    }
+
+    /// Create a runner with a custom network lifecycle adapter (used for tests).
+    pub fn with_network_lifecycle<N: NetworkLifecycle + 'static>(
+        runtime: RunnerRuntime,
+        network_lifecycle: N,
+    ) -> Self {
+        Self {
+            runtime,
+            mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
+            network_lifecycle: Box::new(network_lifecycle),
         }
     }
 
@@ -100,6 +132,16 @@ impl Runner {
             self.run_cleanup_on_failure(
                 prepared,
                 "mount.apply",
+                err.code.clone(),
+                err.message.clone(),
+            );
+            return Err(err);
+        }
+
+        if let Err(err) = self.apply_network_if_needed(prepared) {
+            self.run_cleanup_on_failure(
+                prepared,
+                "launch.network.apply",
                 err.code.clone(),
                 err.message.clone(),
             );
@@ -167,25 +209,49 @@ impl Runner {
 
     /// Clean transient resources and emit cleanup evidence.
     pub fn cleanup(&self, prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
-        match cleanup_run(prepared) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                prepared.state = RunState::Failed;
-                let error_code = err.code.clone();
-                let message = err.message.clone();
-                let _ = write_event(
-                    prepared,
-                    STAGE_CLEANUP,
-                    EVENT_RUN_FAILED,
-                    json!({
-                        "reason": "cleanup.failure",
-                        "errorCode": error_code,
-                        "message": message
-                    }),
+        let network_release_error = self.release_network_if_applied(prepared).err();
+        let cleanup_error = cleanup_run(prepared).err();
+
+        if let Some(err) = network_release_error {
+            prepared.state = RunState::Failed;
+            let mut message = err.message.clone();
+            if let Some(local_cleanup_err) = cleanup_error {
+                message = format!(
+                    "{message}; local cleanup also failed: {}",
+                    local_cleanup_err.message
                 );
-                Err(err)
             }
+            let _ = write_event(
+                prepared,
+                STAGE_CLEANUP,
+                EVENT_RUN_FAILED,
+                json!({
+                    "reason": "cleanup.network.release",
+                    "errorCode": err.code,
+                    "message": message
+                }),
+            );
+            return Err(ErrorItem::new(err.code, err.path, message));
         }
+
+        if let Some(err) = cleanup_error {
+            prepared.state = RunState::Failed;
+            let error_code = err.code.clone();
+            let message = err.message.clone();
+            let _ = write_event(
+                prepared,
+                STAGE_CLEANUP,
+                EVENT_RUN_FAILED,
+                json!({
+                    "reason": "cleanup.failure",
+                    "errorCode": error_code,
+                    "message": message
+                }),
+            );
+            return Err(err);
+        }
+
+        Ok(())
     }
 
     pub(crate) fn spawn(&self, command: &crate::model::CommandSpec) -> std::io::Result<u32> {
@@ -201,6 +267,13 @@ impl Runner {
         error_code: String,
         message: String,
     ) {
+        let mut final_message = message;
+        if let Err(network_err) = self.release_network_if_applied(prepared) {
+            final_message = format!(
+                "{final_message}; network release failed during failure cleanup: {}",
+                network_err.message
+            );
+        }
         prepared.state = RunState::Failed;
         let _ = fs::write(prepared.cleanup_marker_path(), "cleanup invoked");
         let _ = write_event(
@@ -210,9 +283,86 @@ impl Runner {
             json!({
                 "reason": reason,
                 "errorCode": error_code,
-                "message": message
+                "message": final_message
             }),
         );
+    }
+
+    fn apply_network_if_needed(&self, prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
+        let Some(network_plan) = prepared.network_plan.clone() else {
+            return Ok(());
+        };
+
+        write_network_event_if_enabled(
+            prepared,
+            STAGE_LAUNCH,
+            EVENT_NETWORK_PLAN_GENERATED,
+            json!({
+                "tap": network_plan.tap.name,
+                "table": network_plan.nft.table,
+                "chains": network_plan.nft.chains,
+                "rulesTotal": network_plan.nft.rules.len()
+            }),
+        )?;
+
+        let applied = self
+            .network_lifecycle
+            .apply(&prepared.run_id, &network_plan)
+            .map_err(|err| run_network_apply_error(err.path, err.message))?;
+        for rule in &applied.rules {
+            write_network_event_if_enabled(
+                prepared,
+                STAGE_LAUNCH,
+                EVENT_NETWORK_RULE_APPLIED,
+                json!({
+                    "tap": applied.tap_name,
+                    "table": applied.table,
+                    "chain": rule.chain,
+                    "protocol": rule.protocol,
+                    "target": rule.target,
+                    "port": rule.port
+                }),
+            )?;
+        }
+        prepared.applied_network = Some(applied);
+        Ok(())
+    }
+
+    fn release_network_if_applied(&self, prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
+        let Some(applied) = prepared.applied_network.take() else {
+            return Ok(());
+        };
+
+        if let Err(err) = self.network_lifecycle.release(&applied) {
+            let message = format!("failed to release network resources: {}", err.message);
+            let _ = write_network_event_if_enabled(
+                prepared,
+                STAGE_CLEANUP,
+                EVENT_NETWORK_RULE_CLEANUP_FAILED,
+                json!({
+                    "tap": applied.tap_name,
+                    "table": applied.table,
+                    "chains": applied.chains,
+                    "rulesTotal": applied.rules.len(),
+                    "errorCode": SR_RUN_202,
+                    "message": message
+                }),
+            );
+            return Err(run_network_release_error(err.path, message));
+        }
+
+        write_network_event_if_enabled(
+            prepared,
+            STAGE_CLEANUP,
+            EVENT_NETWORK_RULE_RELEASED,
+            json!({
+                "tap": applied.tap_name,
+                "table": applied.table,
+                "chains": applied.chains,
+                "rulesTotal": applied.rules.len()
+            }),
+        )?;
+        Ok(())
     }
 }
 
@@ -223,6 +373,27 @@ fn mount_event_enabled(prepared: &PreparedRun, event_type: &str) -> bool {
             .events
             .iter()
             .any(|event| event == event_type)
+}
+
+fn network_event_enabled(prepared: &PreparedRun, event_type: &str) -> bool {
+    prepared.evidence_plan.enabled
+        && prepared
+            .evidence_plan
+            .events
+            .iter()
+            .any(|event| event == event_type)
+}
+
+fn write_network_event_if_enabled(
+    prepared: &mut PreparedRun,
+    stage: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> Result<(), ErrorItem> {
+    if !network_event_enabled(prepared, event_type) {
+        return Ok(());
+    }
+    write_event(prepared, stage, event_type, payload)
 }
 
 fn write_mount_event_if_enabled(
@@ -372,6 +543,14 @@ fn ensure_runtime_binary(binary: &str, label: &str, error_path: &str) -> Result<
 
 fn preflight_error(path: &str, message: String) -> ErrorItem {
     ErrorItem::new(SR_RUN_002, path, message)
+}
+
+fn run_network_apply_error(path: impl Into<String>, message: impl Into<String>) -> ErrorItem {
+    ErrorItem::new(SR_RUN_201, path, message)
+}
+
+fn run_network_release_error(path: impl Into<String>, message: impl Into<String>) -> ErrorItem {
+    ErrorItem::new(SR_RUN_202, path, message)
 }
 
 fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
