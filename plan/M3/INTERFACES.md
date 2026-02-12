@@ -54,6 +54,27 @@ network:
 - `network.rule.released`
 - `network.rule.cleanup_failed`
 
+`network.rule.hit` payload（M3 Stage 5 定稿，计数器采样口径）：
+
+```json
+{
+  "tap": "sr-tap-sr-20260212-001",
+  "table": "safe_run",
+  "chain": "forward",
+  "protocol": "tcp",
+  "target": "1.1.1.1/32",
+  "port": 443,
+  "allowedHits": 23,
+  "blockedHits": 7
+}
+```
+
+补充约束：
+
+- 事件粒度：单条已应用规则。
+- 仅当 `allowedHits + blockedHits > 0` 时写入事件。
+- 事件写入受 `evidencePlan.events` gating 控制。
+
 ## 4. I-RP-001 additive 字段
 
 ```json
@@ -63,6 +84,19 @@ network:
     "rulesTotal": 4,
     "allowedHits": 23,
     "blockedHits": 7
+  }
+}
+```
+
+`mode=none` 输出口径（M3 Stage 5 定稿）：
+
+```json
+{
+  "networkAudit": {
+    "mode": "none",
+    "rulesTotal": 0,
+    "allowedHits": 0,
+    "blockedHits": 0
   }
 }
 ```

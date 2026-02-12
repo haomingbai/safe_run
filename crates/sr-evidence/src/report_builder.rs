@@ -1,8 +1,9 @@
 use crate::hashing::{sha256_file, sha256_json_value};
 use crate::{
-    EvidenceEvent, Integrity, MountAudit, PolicySummary, ReportArtifacts, ResourceUsage, RunReport,
-    EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED, EVENT_RESOURCE_SAMPLED,
-    RUN_REPORT_SCHEMA_VERSION,
+    EvidenceEvent, Integrity, MountAudit, NetworkAudit, PolicySummary, ReportArtifacts,
+    ResourceUsage, RunReport, EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED,
+    EVENT_NETWORK_PLAN_GENERATED, EVENT_NETWORK_RULE_APPLIED, EVENT_NETWORK_RULE_HIT,
+    EVENT_RESOURCE_SAMPLED, RUN_REPORT_SCHEMA_VERSION,
 };
 use serde_json::Value;
 use sr_common::{ErrorItem, SR_EVD_002};
@@ -96,7 +97,7 @@ pub fn compute_artifact_hashes_from_json(
     })
 }
 
-/// Assemble the M0-M2 run report with a precomputed integrity digest.
+/// Assemble a `safe-run.report/v1` report with a precomputed integrity digest.
 pub fn build_report(
     run_id: String,
     started_at: String,
@@ -107,6 +108,7 @@ pub fn build_report(
     resource_usage: ResourceUsage,
     events: Vec<EvidenceEvent>,
     mount_audit: MountAudit,
+    network_audit: NetworkAudit,
     integrity_digest: String,
 ) -> RunReport {
     RunReport {
@@ -120,6 +122,7 @@ pub fn build_report(
         resource_usage,
         events,
         mount_audit,
+        network_audit,
         integrity: Integrity {
             digest: integrity_digest,
         },
@@ -211,6 +214,30 @@ pub fn mount_audit_from_events(events: &[EvidenceEvent]) -> MountAudit {
     }
 }
 
+pub fn network_audit_from_events(
+    events: &[EvidenceEvent],
+    default_mode: &str,
+    policy_rule_count: usize,
+) -> NetworkAudit {
+    let mode = network_mode_from_events(events).unwrap_or_else(|| default_mode.to_string());
+    let rules_total = network_rules_total_from_events(events).unwrap_or_else(|| {
+        let applied = network_rule_applied_count(events);
+        if applied == 0 {
+            policy_rule_count
+        } else {
+            applied
+        }
+    });
+    let (allowed_hits, blocked_hits) = network_hits_from_events(events);
+
+    NetworkAudit {
+        mode,
+        rules_total,
+        allowed_hits,
+        blocked_hits,
+    }
+}
+
 fn unix_timestamp() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -243,6 +270,92 @@ fn collect_reasons(payload: &Value, reasons: &mut Vec<String>) {
 fn push_unique(reasons: &mut Vec<String>, value: String) {
     if !reasons.iter().any(|existing| existing == &value) {
         reasons.push(value);
+    }
+}
+
+fn network_mode_from_events(events: &[EvidenceEvent]) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .find(|event| event.event_type == EVENT_NETWORK_PLAN_GENERATED)
+        .and_then(|event| event.payload.get("mode"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn network_rules_total_from_events(events: &[EvidenceEvent]) -> Option<usize> {
+    events
+        .iter()
+        .rev()
+        .filter(|event| event.event_type == EVENT_NETWORK_PLAN_GENERATED)
+        .find_map(|event| {
+            event
+                .payload
+                .get("rulesTotal")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as usize)
+        })
+}
+
+fn network_rule_applied_count(events: &[EvidenceEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.event_type == EVENT_NETWORK_RULE_APPLIED)
+        .count()
+}
+
+fn network_hits_from_events(events: &[EvidenceEvent]) -> (usize, usize) {
+    let mut allowed = 0usize;
+    let mut blocked = 0usize;
+    for event in events
+        .iter()
+        .filter(|event| event.event_type == EVENT_NETWORK_RULE_HIT)
+    {
+        if let Some((inc_allowed, inc_blocked)) = parse_hit_counters(&event.payload) {
+            allowed += inc_allowed;
+            blocked += inc_blocked;
+        }
+    }
+    (allowed, blocked)
+}
+
+fn parse_hit_counters(payload: &Value) -> Option<(usize, usize)> {
+    let allowed_hits = payload
+        .get("allowedHits")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0) as usize;
+    let blocked_hits = payload
+        .get("blockedHits")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0) as usize;
+    if allowed_hits > 0 || blocked_hits > 0 {
+        return Some((allowed_hits, blocked_hits));
+    }
+
+    if let Some(value) = payload.get("allowed").and_then(|value| value.as_bool()) {
+        return Some((usize::from(value), usize::from(!value)));
+    }
+    if let Some(value) = payload.get("blocked").and_then(|value| value.as_bool()) {
+        return Some((usize::from(!value), usize::from(value)));
+    }
+
+    for key in ["result", "decision", "action"] {
+        if let Some(value) = payload.get(key).and_then(|value| value.as_str()) {
+            if let Some((allowed, blocked)) = parse_hit_decision(value) {
+                return Some((allowed, blocked));
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_hit_decision(value: &str) -> Option<(usize, usize)> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "allowed" | "allow" | "accepted" | "accept" | "pass" => Some((1, 0)),
+        "blocked" | "block" | "denied" | "deny" | "rejected" | "reject" | "drop" => Some((0, 1)),
+        _ => None,
     }
 }
 

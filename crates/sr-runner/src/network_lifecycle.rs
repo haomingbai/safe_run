@@ -19,6 +19,16 @@ pub struct AppliedNetworkRule {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuleHit {
+    pub chain: String,
+    pub protocol: String,
+    pub target: String,
+    pub port: u16,
+    pub allowed_hits: u64,
+    pub blocked_hits: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkLifecycleError {
     pub path: String,
     pub message: String,
@@ -40,6 +50,12 @@ pub trait NetworkLifecycle {
         run_id: &str,
         plan: &NetworkPlan,
     ) -> Result<AppliedNetwork, NetworkLifecycleError>;
+    fn sample_rule_hits(
+        &self,
+        _applied: &AppliedNetwork,
+    ) -> Result<Vec<NetworkRuleHit>, NetworkLifecycleError> {
+        Ok(Vec::new())
+    }
     fn release(&self, applied: &AppliedNetwork) -> Result<(), NetworkLifecycleError>;
 }
 

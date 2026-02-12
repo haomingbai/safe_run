@@ -118,10 +118,68 @@ network:
 - `SR-RUN-201`：网络规则应用失败（run 阶段）。
 - `SR-RUN-202`：网络规则回收失败（cleanup 阶段）。
 
-## 7. 待确认项（写代码前必须先定稿）
+## 7. Stage 5 定稿：`network.rule.hit` 与 `networkAudit` 口径
 
-以下点不在本次确认范围内，写测试/实现前需先在 `plan/` 补齐并确认：
+### 7.1 `network.rule.hit` payload schema（M3 定稿）
 
-1. `network.rule.hit` 的 payload schema（逐包事件 vs 计数器采样、字段名与聚合口径）。
-2. `networkAudit` 在 `mode=none` 时的输出策略（字段是否总是存在、默认值口径）。
-3. allowlist “命中/拦截”的精确定义与规则优先级（尤其是 host 多 IP 展开后的计数聚合方式）。
+M3 采用“计数器采样”语义，不采集逐包事件。runner 在网络生命周期采样阶段写入 `network.rule.hit` 事件，payload 结构如下：
+
+```json
+{
+  "tap": "sr-tap-sr-20260212-001",
+  "table": "safe_run",
+  "chain": "forward",
+  "protocol": "tcp",
+  "target": "1.1.1.1/32",
+  "port": 443,
+  "allowedHits": 23,
+  "blockedHits": 7
+}
+```
+
+约束：
+
+- `allowedHits`、`blockedHits` 为非负整数（`u64` 口径）。
+- 事件粒度为“单条已应用规则”，一条规则对应一条计数事件。
+- 仅当 `allowedHits + blockedHits > 0` 时写事件（避免零命中噪声）。
+- 事件仍受 `CompileBundle.evidencePlan.events` gating：未声明 `network.rule.hit` 时不得写该事件。
+
+### 7.2 `networkAudit` 聚合口径（M3 定稿）
+
+`RunReport.networkAudit` 聚合规则如下：
+
+1. `mode`：优先取事件流中的 `network.plan.generated.mode`，缺失时回退到 `PolicySpec.network.mode`。
+2. `rulesTotal`：优先取 `network.plan.generated.rulesTotal`；缺失时回退到 `network.rule.applied` 事件条数；再缺失时回退到 `PolicySpec.network.egress` 条数。
+3. `allowedHits` / `blockedHits`：对 `network.rule.hit` 事件中的 `allowedHits` / `blockedHits` 求和。
+
+host 多 IP 展开口径：
+
+- 对于 `host` 解析出的每个 IPv4 目标（`/32`）视为独立规则目标；
+- `networkAudit` 以全局求和口径聚合，不做去重折叠。
+
+### 7.3 `mode=none` 的 `networkAudit` 输出策略（M3 定稿）
+
+`networkAudit` 字段在 `RunReport` 中始终存在（additive 且稳定）：
+
+```json
+{
+  "networkAudit": {
+    "mode": "none",
+    "rulesTotal": 0,
+    "allowedHits": 0,
+    "blockedHits": 0
+  }
+}
+```
+
+### 7.4 allowlist 默认证据事件集（M3 定稿）
+
+为确保 M3“网络规则下发/命中/回收可审计”目标可默认生效：
+
+- 当 `network.mode=allowlist`，`CompileBundle.evidencePlan.events` 默认应包含：
+  - `network.plan.generated`
+  - `network.rule.applied`
+  - `network.rule.hit`
+  - `network.rule.released`
+  - `network.rule.cleanup_failed`
+- 当 `network.mode=none`，保持 M0-M2 默认证据事件集，不强制新增 network 事件。

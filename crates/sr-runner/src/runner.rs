@@ -1,9 +1,9 @@
 use crate::cleanup::cleanup_run;
 use crate::constants::{
     EVENT_MOUNT_APPLIED, EVENT_MOUNT_REJECTED, EVENT_MOUNT_VALIDATED, EVENT_NETWORK_PLAN_GENERATED,
-    EVENT_NETWORK_RULE_APPLIED, EVENT_NETWORK_RULE_CLEANUP_FAILED, EVENT_NETWORK_RULE_RELEASED,
-    EVENT_RUN_FAILED, EVENT_RUN_PREPARED, EVENT_VM_STARTED, STAGE_CLEANUP, STAGE_LAUNCH,
-    STAGE_MOUNT, STAGE_PREPARE,
+    EVENT_NETWORK_RULE_APPLIED, EVENT_NETWORK_RULE_CLEANUP_FAILED, EVENT_NETWORK_RULE_HIT,
+    EVENT_NETWORK_RULE_RELEASED, EVENT_RUN_FAILED, EVENT_RUN_PREPARED, EVENT_VM_STARTED,
+    STAGE_CLEANUP, STAGE_LAUNCH, STAGE_MOUNT, STAGE_PREPARE,
 };
 use crate::event::write_event;
 use crate::model::{
@@ -209,8 +209,37 @@ impl Runner {
 
     /// Clean transient resources and emit cleanup evidence.
     pub fn cleanup(&self, prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
+        let network_hits_error = self.collect_network_hits_if_applied(prepared).err();
         let network_release_error = self.release_network_if_applied(prepared).err();
         let cleanup_error = cleanup_run(prepared).err();
+
+        if let Some(err) = network_hits_error {
+            prepared.state = RunState::Failed;
+            let mut message = err.message.clone();
+            if let Some(release_err) = network_release_error {
+                message = format!(
+                    "{message}; network release also failed: {}",
+                    release_err.message
+                );
+            }
+            if let Some(local_cleanup_err) = cleanup_error {
+                message = format!(
+                    "{message}; local cleanup also failed: {}",
+                    local_cleanup_err.message
+                );
+            }
+            let _ = write_event(
+                prepared,
+                STAGE_CLEANUP,
+                EVENT_RUN_FAILED,
+                json!({
+                    "reason": "cleanup.network.hit",
+                    "errorCode": err.code,
+                    "message": message
+                }),
+            );
+            return Err(ErrorItem::new(err.code, err.path, message));
+        }
 
         if let Some(err) = network_release_error {
             prepared.state = RunState::Failed;
@@ -325,6 +354,40 @@ impl Runner {
             )?;
         }
         prepared.applied_network = Some(applied);
+        Ok(())
+    }
+
+    fn collect_network_hits_if_applied(&self, prepared: &mut PreparedRun) -> Result<(), ErrorItem> {
+        let Some(applied) = prepared.applied_network.as_ref() else {
+            return Ok(());
+        };
+
+        let hits = self
+            .network_lifecycle
+            .sample_rule_hits(applied)
+            .map_err(|err| run_network_apply_error(err.path, err.message))?;
+        let tap_name = applied.tap_name.clone();
+        let table = applied.table.clone();
+        for hit in hits {
+            if hit.allowed_hits == 0 && hit.blocked_hits == 0 {
+                continue;
+            }
+            write_network_event_if_enabled(
+                prepared,
+                STAGE_CLEANUP,
+                EVENT_NETWORK_RULE_HIT,
+                json!({
+                    "tap": tap_name,
+                    "table": table,
+                    "chain": hit.chain,
+                    "protocol": hit.protocol,
+                    "target": hit.target,
+                    "port": hit.port,
+                    "allowedHits": hit.allowed_hits,
+                    "blockedHits": hit.blocked_hits
+                }),
+            )?;
+        }
         Ok(())
     }
 

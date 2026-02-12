@@ -3,8 +3,8 @@ use sr_common::{ErrorItem, SR_CMP_002, SR_EVD_002, SR_RUN_001};
 use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
     build_report, compute_artifact_hashes_from_json, compute_integrity_digest, event_time_range,
-    mount_audit_from_events, resource_usage_from_events, ArtifactJsonInputs, EvidenceEvent,
-    PolicySummary, RunReport,
+    mount_audit_from_events, network_audit_from_events, resource_usage_from_events,
+    ArtifactJsonInputs, EvidenceEvent, PolicySummary, RunReport,
 };
 use sr_policy::{load_policy_from_path, validate_policy_with_allowlist, NetworkMode, PolicySpec};
 use sr_runner::{MonitorResult, RunState, Runner, RunnerControlRequest, RuntimeContext};
@@ -276,11 +276,14 @@ fn build_report_from_events(
 ) -> Result<RunReport, ErrorItem> {
     let (started_at, finished_at) = event_time_range(events);
     let resource_usage = resource_usage_from_events(events);
+    let network_mode = network_label(&policy.network.mode).to_string();
     let policy_summary = PolicySummary {
-        network: network_label(&policy.network.mode).to_string(),
+        network: network_mode.clone(),
         mounts: policy.mounts.len(),
     };
     let mount_audit = mount_audit_from_events(events);
+    let network_audit =
+        network_audit_from_events(events, &network_mode, policy.network.egress.len());
     let artifacts = compute_report_artifacts(prepared, policy)?;
     Ok(build_report(
         prepared.run_id.clone(),
@@ -292,6 +295,7 @@ fn build_report_from_events(
         resource_usage,
         events.to_vec(),
         mount_audit,
+        network_audit,
         String::new(),
     ))
 }
@@ -549,7 +553,10 @@ fn print_error_result(err: &ErrorItem) {
 mod tests {
     use super::*;
     use sr_compiler::compile_dry_run;
-    use sr_policy::{Audit, Cpu, Memory, Metadata, Network, NetworkMode, Resources, Runtime};
+    use sr_evidence::{EVENT_NETWORK_RULE_HIT, STAGE_CLEANUP};
+    use sr_policy::{
+        Audit, Cpu, Memory, Metadata, Network, NetworkEgressRule, NetworkMode, Resources, Runtime,
+    };
     use sr_runner::RunnerRuntime;
     use std::fs::File;
     use std::io::Write;
@@ -618,12 +625,160 @@ mod tests {
         let result = build_and_write_report(&prepared, &policy, &monitor_result, &report_path);
         assert!(prepared.firecracker_config_path().exists());
         assert!(prepared.event_log_path().exists());
+        let report = result.unwrap_or_else(|err| {
+            panic!("report build should succeed after cleanup, got: {err:?}");
+        });
+        let recomputed = compute_integrity_digest(&report).expect("recompute integrity digest");
+        assert_eq!(report.integrity.digest, recomputed);
+        assert_eq!(report.network_audit.mode, "none");
+        assert_eq!(report.network_audit.rules_total, 0);
+        assert_eq!(report.network_audit.allowed_hits, 0);
+        assert_eq!(report.network_audit.blocked_hits, 0);
+
+        let report_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&report_path).expect("read report file"))
+                .expect("parse report json");
+        assert_eq!(report_json["networkAudit"]["mode"], "none");
+        assert_eq!(report_json["networkAudit"]["rulesTotal"], 0);
+
         let _ = fs::remove_dir_all(&workdir);
-        assert!(
-            result.is_ok(),
-            "report build should succeed after cleanup, got: {:?}",
-            result.err()
-        );
+    }
+
+    #[test]
+    fn report_build_allowlist_uses_policy_defaults_for_network_audit() {
+        let run_id = "sr-test-report-allowlist";
+        let workdir = temp_run_dir(run_id);
+        write_mock_vm_artifacts(&workdir);
+
+        let mut policy = sample_policy();
+        policy.network.mode = NetworkMode::Allowlist;
+        policy.network.egress = vec![NetworkEgressRule {
+            protocol: Some("tcp".to_string()),
+            host: None,
+            cidr: Some("1.1.1.1/32".to_string()),
+            port: Some(443),
+        }];
+        let compile_bundle = compile_dry_run(&policy).expect("compile should succeed");
+        let request = RunnerControlRequest {
+            compile_bundle,
+            runtime_context: RuntimeContext {
+                workdir: workdir.to_string_lossy().to_string(),
+                timeout_sec: 1,
+                sample_interval_ms: None,
+                cgroup_path: None,
+            },
+        };
+        let runner = Runner::with_runtime(RunnerRuntime {
+            jailer_bin: "/bin/true".to_string(),
+            firecracker_bin: "/bin/true".to_string(),
+        });
+
+        let mut prepared = runner.prepare(request).expect("prepare should succeed");
+        runner
+            .cleanup(&mut prepared)
+            .expect("cleanup should succeed");
+
+        let report_path = prepared.artifacts_dir().join(&prepared.artifacts.report);
+        let monitor_result = MonitorResult {
+            exit_code: 0,
+            timed_out: false,
+            sample_count: 0,
+        };
+        let report = build_and_write_report(&prepared, &policy, &monitor_result, &report_path)
+            .expect("report build should succeed");
+        let recomputed = compute_integrity_digest(&report).expect("recompute digest");
+        assert_eq!(report.integrity.digest, recomputed);
+        assert_eq!(report.network_audit.mode, "allowlist");
+        assert_eq!(report.network_audit.rules_total, 1);
+        assert_eq!(report.network_audit.allowed_hits, 0);
+        assert_eq!(report.network_audit.blocked_hits, 0);
+
+        let report_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&report_path).expect("read report file"))
+                .expect("parse report json");
+        assert_eq!(report_json["networkAudit"]["mode"], "allowlist");
+        assert_eq!(report_json["networkAudit"]["rulesTotal"], 1);
+
+        let _ = fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn report_build_allowlist_aggregates_network_rule_hit_events() {
+        let run_id = "sr-test-report-allowlist-hit";
+        let workdir = temp_run_dir(run_id);
+        write_mock_vm_artifacts(&workdir);
+
+        let mut policy = sample_policy();
+        policy.network.mode = NetworkMode::Allowlist;
+        policy.network.egress = vec![NetworkEgressRule {
+            protocol: Some("tcp".to_string()),
+            host: None,
+            cidr: Some("1.1.1.1/32".to_string()),
+            port: Some(443),
+        }];
+        let compile_bundle = compile_dry_run(&policy).expect("compile should succeed");
+        let request = RunnerControlRequest {
+            compile_bundle,
+            runtime_context: RuntimeContext {
+                workdir: workdir.to_string_lossy().to_string(),
+                timeout_sec: 1,
+                sample_interval_ms: None,
+                cgroup_path: None,
+            },
+        };
+        let runner = Runner::with_runtime(RunnerRuntime {
+            jailer_bin: "/bin/true".to_string(),
+            firecracker_bin: "/bin/true".to_string(),
+        });
+
+        let mut prepared = runner.prepare(request).expect("prepare should succeed");
+        runner
+            .cleanup(&mut prepared)
+            .expect("cleanup should succeed");
+
+        let synthetic_hit = EvidenceEvent {
+            timestamp: "2026-02-12T10:00:00Z".to_string(),
+            run_id: prepared.run_id.clone(),
+            stage: STAGE_CLEANUP.to_string(),
+            event_type: EVENT_NETWORK_RULE_HIT.to_string(),
+            payload: serde_json::json!({
+                "tap": format!("sr-tap-{}", prepared.run_id),
+                "table": "safe_run",
+                "chain": "forward",
+                "protocol": "tcp",
+                "target": "1.1.1.1/32",
+                "port": 443,
+                "allowedHits": 5,
+                "blockedHits": 2
+            }),
+            hash_prev: "sha256:test-prev".to_string(),
+            hash_self: "sha256:test-self".to_string(),
+        };
+        let mut log = std::fs::OpenOptions::new()
+            .append(true)
+            .open(prepared.event_log_path())
+            .expect("open event log");
+        writeln!(
+            log,
+            "{}",
+            serde_json::to_string(&synthetic_hit).expect("serialize synthetic hit event")
+        )
+        .expect("append synthetic hit event");
+
+        let report_path = prepared.artifacts_dir().join(&prepared.artifacts.report);
+        let monitor_result = MonitorResult {
+            exit_code: 0,
+            timed_out: false,
+            sample_count: 0,
+        };
+        let report = build_and_write_report(&prepared, &policy, &monitor_result, &report_path)
+            .expect("report build should succeed");
+        assert_eq!(report.network_audit.mode, "allowlist");
+        assert_eq!(report.network_audit.rules_total, 1);
+        assert_eq!(report.network_audit.allowed_hits, 5);
+        assert_eq!(report.network_audit.blocked_hits, 2);
+
+        let _ = fs::remove_dir_all(&workdir);
     }
 
     #[test]

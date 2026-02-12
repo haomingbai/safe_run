@@ -1,22 +1,22 @@
 mod common;
 
 use common::{
-    new_temp_dir, override_launch_command, parse_event_stream, remove_temp_dir, runtime_context,
-    write_mock_cgroup_files, write_mock_vm_artifacts,
+    build_report_from_events, new_temp_dir, override_launch_command, parse_event_stream,
+    remove_temp_dir, runtime_context, write_mock_cgroup_files, write_mock_vm_artifacts,
 };
 use sr_common::{SR_RUN_001, SR_RUN_201, SR_RUN_202};
 use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
     EVENT_NETWORK_PLAN_GENERATED, EVENT_NETWORK_RULE_APPLIED, EVENT_NETWORK_RULE_CLEANUP_FAILED,
-    EVENT_NETWORK_RULE_RELEASED, EVENT_RUN_FAILED,
+    EVENT_NETWORK_RULE_HIT, EVENT_NETWORK_RULE_RELEASED, EVENT_RUN_FAILED,
 };
 use sr_policy::{
     validate_policy, Audit, Cpu, Memory, Metadata, Network, NetworkEgressRule, NetworkMode,
     PolicySpec, Resources, Runtime,
 };
 use sr_runner::{
-    AppliedNetwork, AppliedNetworkRule, NetworkLifecycle, NetworkLifecycleError, Runner,
-    RunnerControlRequest, RunnerRuntime,
+    AppliedNetwork, AppliedNetworkRule, NetworkLifecycle, NetworkLifecycleError, NetworkRuleHit,
+    Runner, RunnerControlRequest, RunnerRuntime,
 };
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +24,9 @@ use std::sync::{Arc, Mutex};
 struct RecordingNetworkLifecycle {
     calls: Arc<Mutex<Vec<String>>>,
     fail_apply: bool,
+    fail_hits: bool,
     fail_release: bool,
+    sampled_hits: Vec<NetworkRuleHit>,
 }
 
 impl NetworkLifecycle for RecordingNetworkLifecycle {
@@ -71,6 +73,23 @@ impl NetworkLifecycle for RecordingNetworkLifecycle {
         })
     }
 
+    fn sample_rule_hits(
+        &self,
+        applied: &AppliedNetwork,
+    ) -> Result<Vec<NetworkRuleHit>, NetworkLifecycleError> {
+        self.calls
+            .lock()
+            .expect("lock calls")
+            .push(format!("hits:{}", applied.tap_name));
+        if self.fail_hits {
+            return Err(NetworkLifecycleError::new(
+                "cleanup.network.hit",
+                "mock hit sampling failure",
+            ));
+        }
+        Ok(self.sampled_hits.clone())
+    }
+
     fn release(&self, applied: &AppliedNetwork) -> Result<(), NetworkLifecycleError> {
         self.calls
             .lock()
@@ -103,7 +122,9 @@ fn network_apply_failure_returns_sr_run_201() {
         RecordingNetworkLifecycle {
             calls: calls.clone(),
             fail_apply: true,
+            fail_hits: false,
             fail_release: false,
+            sampled_hits: vec![],
         },
     );
 
@@ -146,7 +167,9 @@ fn network_cleanup_failure_returns_sr_run_202() {
         RecordingNetworkLifecycle {
             calls: calls.clone(),
             fail_apply: false,
+            fail_hits: false,
             fail_release: true,
+            sampled_hits: vec![],
         },
     );
 
@@ -203,7 +226,9 @@ fn launch_failure_after_network_apply_triggers_release() {
         RecordingNetworkLifecycle {
             calls: calls.clone(),
             fail_apply: false,
+            fail_hits: false,
             fail_release: false,
+            sampled_hits: vec![],
         },
     );
 
@@ -262,7 +287,9 @@ fn network_events_follow_evidence_gating() {
         RecordingNetworkLifecycle {
             calls: calls.clone(),
             fail_apply: false,
+            fail_hits: false,
             fail_release: false,
+            sampled_hits: vec![],
         },
     );
 
@@ -294,7 +321,151 @@ fn network_events_follow_evidence_gating() {
     remove_temp_dir(&workdir);
 }
 
+#[test]
+fn network_rule_hit_events_are_emitted_and_aggregated() {
+    let workdir = new_temp_dir("network-rule-hit-events");
+    let cgroup_dir = workdir.join("mock-cgroup");
+    write_mock_vm_artifacts(&workdir);
+    write_mock_cgroup_files(&cgroup_dir, 240, 3584);
+
+    let (policy, compile_bundle) = compile_allowlist_policy_and_bundle(true);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runner = Runner::with_network_lifecycle(
+        RunnerRuntime {
+            jailer_bin: "/bin/true".to_string(),
+            firecracker_bin: "/bin/true".to_string(),
+        },
+        RecordingNetworkLifecycle {
+            calls: calls.clone(),
+            fail_apply: false,
+            fail_hits: false,
+            fail_release: false,
+            sampled_hits: vec![
+                NetworkRuleHit {
+                    chain: "forward".to_string(),
+                    protocol: "tcp".to_string(),
+                    target: "1.1.1.1/32".to_string(),
+                    port: 443,
+                    allowed_hits: 4,
+                    blocked_hits: 1,
+                },
+                NetworkRuleHit {
+                    chain: "forward".to_string(),
+                    protocol: "udp".to_string(),
+                    target: "2.2.2.2/32".to_string(),
+                    port: 53,
+                    allowed_hits: 0,
+                    blocked_hits: 0,
+                },
+            ],
+        },
+    );
+
+    let request = RunnerControlRequest {
+        compile_bundle: compile_bundle.clone(),
+        runtime_context: runtime_context(&workdir, Some(&cgroup_dir), 3, 20),
+    };
+    let mut prepared = runner.prepare(request).expect("prepare should succeed");
+    override_launch_command(&mut prepared, "sleep 0.05");
+    runner.launch(&mut prepared).expect("launch should succeed");
+    let monitor_result = runner
+        .monitor(&mut prepared)
+        .expect("monitor should succeed");
+    runner
+        .cleanup(&mut prepared)
+        .expect("cleanup should succeed");
+
+    let events = parse_event_stream(&prepared.event_log_path());
+    let hit_events = events
+        .iter()
+        .filter(|event| event.event_type == EVENT_NETWORK_RULE_HIT)
+        .collect::<Vec<_>>();
+    assert_eq!(hit_events.len(), 1);
+    assert_eq!(hit_events[0].payload["allowedHits"], 4);
+    assert_eq!(hit_events[0].payload["blockedHits"], 1);
+    assert_eq!(
+        hit_events[0].payload["tap"],
+        format!("sr-tap-{}", prepared.run_id)
+    );
+
+    let report = build_report_from_events(
+        &workdir,
+        &prepared.run_id,
+        &monitor_result,
+        &events,
+        &policy,
+        &compile_bundle,
+    );
+    assert_eq!(report.network_audit.mode, "allowlist");
+    assert_eq!(report.network_audit.rules_total, 1);
+    assert_eq!(report.network_audit.allowed_hits, 4);
+    assert_eq!(report.network_audit.blocked_hits, 1);
+
+    let calls = calls.lock().expect("lock calls").clone();
+    assert!(calls.iter().any(|call| call.starts_with("hits:")));
+    assert!(calls.iter().any(|call| call.starts_with("release:")));
+
+    remove_temp_dir(&workdir);
+}
+
+#[test]
+fn network_rule_hit_sampling_failure_returns_sr_run_201() {
+    let workdir = new_temp_dir("network-rule-hit-failure");
+    let cgroup_dir = workdir.join("mock-cgroup");
+    write_mock_vm_artifacts(&workdir);
+    write_mock_cgroup_files(&cgroup_dir, 250, 4096);
+
+    let compile_bundle = compile_allowlist_bundle(true);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runner = Runner::with_network_lifecycle(
+        RunnerRuntime {
+            jailer_bin: "/bin/true".to_string(),
+            firecracker_bin: "/bin/true".to_string(),
+        },
+        RecordingNetworkLifecycle {
+            calls: calls.clone(),
+            fail_apply: false,
+            fail_hits: true,
+            fail_release: false,
+            sampled_hits: vec![],
+        },
+    );
+
+    let request = RunnerControlRequest {
+        compile_bundle,
+        runtime_context: runtime_context(&workdir, Some(&cgroup_dir), 3, 20),
+    };
+    let mut prepared = runner.prepare(request).expect("prepare should succeed");
+    override_launch_command(&mut prepared, "sleep 0.05");
+    runner.launch(&mut prepared).expect("launch should succeed");
+    let _ = runner
+        .monitor(&mut prepared)
+        .expect("monitor should succeed");
+
+    let err = runner
+        .cleanup(&mut prepared)
+        .expect_err("cleanup must fail");
+    assert_eq!(err.code, SR_RUN_201);
+    assert_eq!(err.path, "cleanup.network.hit");
+
+    let events = parse_event_stream(&prepared.event_log_path());
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == EVENT_RUN_FAILED));
+    let calls = calls.lock().expect("lock calls").clone();
+    assert!(calls.iter().any(|call| call.starts_with("hits:")));
+    assert!(calls.iter().any(|call| call.starts_with("release:")));
+
+    remove_temp_dir(&workdir);
+}
+
 fn compile_allowlist_bundle(include_network_events: bool) -> CompileBundle {
+    compile_allowlist_policy_and_bundle(include_network_events).1
+}
+
+fn compile_allowlist_policy_and_bundle(
+    include_network_events: bool,
+) -> (PolicySpec, CompileBundle) {
     let policy = PolicySpec {
         api_version: "policy.safe-run.dev/v1alpha1".to_string(),
         metadata: Metadata {
@@ -332,19 +503,23 @@ fn compile_allowlist_bundle(include_network_events: bool) -> CompileBundle {
         "validation failed: {:?}",
         validation.errors
     );
-    let mut bundle = compile_dry_run(
-        &validation
-            .normalized_policy
-            .expect("normalized policy should exist"),
-    )
-    .expect("compile should succeed");
+    let normalized = validation
+        .normalized_policy
+        .expect("normalized policy should exist");
+    let mut bundle = compile_dry_run(&normalized).expect("compile should succeed");
     if include_network_events {
         ensure_network_event(&mut bundle, EVENT_NETWORK_PLAN_GENERATED);
         ensure_network_event(&mut bundle, EVENT_NETWORK_RULE_APPLIED);
+        ensure_network_event(&mut bundle, EVENT_NETWORK_RULE_HIT);
         ensure_network_event(&mut bundle, EVENT_NETWORK_RULE_RELEASED);
         ensure_network_event(&mut bundle, EVENT_NETWORK_RULE_CLEANUP_FAILED);
+    } else {
+        bundle
+            .evidence_plan
+            .events
+            .retain(|event| !event.starts_with("network."));
     }
-    bundle
+    (normalized, bundle)
 }
 
 fn ensure_network_event(bundle: &mut CompileBundle, event_type: &str) {

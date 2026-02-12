@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sr_common::{ErrorItem, SR_CMP_001, SR_CMP_002, SR_CMP_201};
-use sr_evidence::REQUIRED_EVIDENCE_EVENTS;
+use sr_evidence::{
+    EVENT_NETWORK_PLAN_GENERATED, EVENT_NETWORK_RULE_APPLIED, EVENT_NETWORK_RULE_CLEANUP_FAILED,
+    EVENT_NETWORK_RULE_HIT, EVENT_NETWORK_RULE_RELEASED, REQUIRED_EVIDENCE_EVENTS,
+};
 use sr_policy::{NetworkMode, PolicySpec};
 
 mod mount_plan;
@@ -38,6 +41,14 @@ pub struct EvidencePlan {
     pub enabled: bool,
     pub events: Vec<String>,
 }
+
+const ALLOWLIST_NETWORK_EVENTS: [&str; 5] = [
+    EVENT_NETWORK_PLAN_GENERATED,
+    EVENT_NETWORK_RULE_APPLIED,
+    EVENT_NETWORK_RULE_HIT,
+    EVENT_NETWORK_RULE_RELEASED,
+    EVENT_NETWORK_RULE_CLEANUP_FAILED,
+];
 
 /// Compile a validated `PolicySpec` into a deterministic `CompileBundle`.
 /// Boundary: M3 allows `network.mode=allowlist`; `networkPlan` must be null for none and non-null for allowlist.
@@ -94,7 +105,7 @@ pub fn compile_dry_run(policy: &PolicySpec) -> Result<CompileBundle, ErrorItem> 
         network_plan,
         evidence_plan: EvidencePlan {
             enabled: true,
-            events: required_evidence_events(),
+            events: required_evidence_events(&policy.network.mode),
         },
     };
     ensure_bundle_complete(&bundle, &policy.network.mode)?;
@@ -199,7 +210,7 @@ fn ensure_bundle_complete(
         ));
     }
 
-    let required = required_evidence_events();
+    let required = required_evidence_events(network_mode);
     for event in required {
         if !bundle
             .evidence_plan
@@ -217,11 +228,19 @@ fn ensure_bundle_complete(
     Ok(())
 }
 
-fn required_evidence_events() -> Vec<String> {
-    REQUIRED_EVIDENCE_EVENTS
+fn required_evidence_events(network_mode: &NetworkMode) -> Vec<String> {
+    let mut events = REQUIRED_EVIDENCE_EVENTS
         .iter()
         .map(|event| event.to_string())
-        .collect()
+        .collect::<Vec<String>>();
+    if matches!(network_mode, NetworkMode::Allowlist) {
+        events.extend(
+            ALLOWLIST_NETWORK_EVENTS
+                .iter()
+                .map(|event| event.to_string()),
+        );
+    }
+    events
 }
 
 fn cmp_template_error(path: impl Into<String>, message: impl Into<String>) -> ErrorItem {
@@ -316,6 +335,11 @@ mod tests {
         assert_eq!(network_plan.nft.table, "safe_run");
         assert_eq!(network_plan.nft.chains, vec!["forward".to_string()]);
         assert_eq!(network_plan.nft.rules.len(), 1);
+        assert!(bundle
+            .evidence_plan
+            .events
+            .iter()
+            .any(|event| event == EVENT_NETWORK_RULE_HIT));
     }
 
     #[test]
@@ -408,7 +432,7 @@ mod tests {
             network_plan: None,
             evidence_plan: EvidencePlan {
                 enabled: true,
-                events: required_evidence_events(),
+                events: required_evidence_events(&NetworkMode::None),
             },
         };
 
@@ -492,7 +516,7 @@ mod tests {
             network_plan: None,
             evidence_plan: EvidencePlan {
                 enabled: true,
-                events: required_evidence_events(),
+                events: required_evidence_events(&NetworkMode::Allowlist),
             },
         };
 

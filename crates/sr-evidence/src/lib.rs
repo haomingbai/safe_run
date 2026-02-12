@@ -11,7 +11,7 @@ pub use hashing::{
 };
 pub use report_builder::{
     build_report, compute_artifact_hashes, compute_artifact_hashes_from_json,
-    compute_integrity_digest, event_time_range, mount_audit_from_events,
+    compute_integrity_digest, event_time_range, mount_audit_from_events, network_audit_from_events,
     resource_usage_from_events, ArtifactInputs, ArtifactJsonInputs,
 };
 
@@ -85,6 +85,8 @@ pub struct RunReport {
     pub events: Vec<EvidenceEvent>,
     #[serde(rename = "mountAudit", default)]
     pub mount_audit: MountAudit,
+    #[serde(rename = "networkAudit", default)]
+    pub network_audit: NetworkAudit,
     pub integrity: Integrity,
 }
 
@@ -103,6 +105,28 @@ impl Default for MountAudit {
             accepted: 0,
             rejected: 0,
             reasons: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkAudit {
+    pub mode: String,
+    #[serde(rename = "rulesTotal")]
+    pub rules_total: usize,
+    #[serde(rename = "allowedHits")]
+    pub allowed_hits: usize,
+    #[serde(rename = "blockedHits")]
+    pub blocked_hits: usize,
+}
+
+impl Default for NetworkAudit {
+    fn default() -> Self {
+        Self {
+            mode: "none".to_string(),
+            rules_total: 0,
+            allowed_hits: 0,
+            blocked_hits: 0,
         }
     }
 }
@@ -175,6 +199,18 @@ mod tests {
         }
     }
 
+    fn network_event(event_type: &str, payload: serde_json::Value) -> EvidenceEvent {
+        EvidenceEvent {
+            timestamp: "2026-02-06T10:00:00Z".to_string(),
+            run_id: "sr-20260206-001".to_string(),
+            stage: STAGE_LAUNCH.to_string(),
+            event_type: event_type.to_string(),
+            payload,
+            hash_prev: "sha256:0000000000000000".to_string(),
+            hash_self: "sha256:1111111111111111".to_string(),
+        }
+    }
+
     #[test]
     fn mount_audit_aggregates_counts_and_reasons() {
         let events = vec![
@@ -234,6 +270,7 @@ mod tests {
             .collect();
 
         let mount_audit = mount_audit_from_events(&parsed);
+        let network_audit = network_audit_from_events(&parsed, "none", 0);
         let report = build_report(
             "sr-20260206-002".to_string(),
             "2026-02-06T10:00:00Z".to_string(),
@@ -255,6 +292,7 @@ mod tests {
             },
             parsed,
             mount_audit,
+            network_audit,
             "".to_string(),
         );
 
@@ -267,6 +305,35 @@ mod tests {
         );
 
         let _ = fs::remove_file(&log_path);
+    }
+
+    #[test]
+    fn network_audit_aggregates_mode_rules_and_hits() {
+        let events = vec![
+            network_event(
+                EVENT_NETWORK_PLAN_GENERATED,
+                json!({"mode": "allowlist", "rulesTotal": 2}),
+            ),
+            network_event(
+                EVENT_NETWORK_RULE_HIT,
+                json!({"result": "allowed", "target": "1.1.1.1/32"}),
+            ),
+            network_event(
+                EVENT_NETWORK_RULE_HIT,
+                json!({"decision": "blocked", "target": "2.2.2.2/32"}),
+            ),
+            network_event(
+                EVENT_NETWORK_RULE_HIT,
+                json!({"allowedHits": 3, "blockedHits": 1}),
+            ),
+        ];
+
+        let audit = network_audit_from_events(&events, "none", 0);
+
+        assert_eq!(audit.mode, "allowlist");
+        assert_eq!(audit.rules_total, 2);
+        assert_eq!(audit.allowed_hits, 4);
+        assert_eq!(audit.blocked_hits, 2);
     }
 
     #[test]
@@ -301,6 +368,7 @@ mod tests {
                 hash_self: "sha256:1111111111111111".to_string(),
             }],
             mount_audit: MountAudit::default(),
+            network_audit: NetworkAudit::default(),
             integrity: Integrity {
                 digest: "sha256:report".to_string(),
             },
@@ -321,6 +389,10 @@ mod tests {
         assert_eq!(value["mountAudit"]["requested"], 0);
         assert_eq!(value["mountAudit"]["accepted"], 0);
         assert_eq!(value["mountAudit"]["rejected"], 0);
+        assert_eq!(value["networkAudit"]["mode"], "none");
+        assert_eq!(value["networkAudit"]["rulesTotal"], 0);
+        assert_eq!(value["networkAudit"]["allowedHits"], 0);
+        assert_eq!(value["networkAudit"]["blockedHits"], 0);
         assert_eq!(value["integrity"]["digest"], "sha256:report");
     }
 
@@ -402,6 +474,7 @@ mod tests {
             },
             vec![],
             MountAudit::default(),
+            NetworkAudit::default(),
             "sha256:digest".to_string(),
         );
 
@@ -453,6 +526,7 @@ mod tests {
             },
             vec![],
             MountAudit::default(),
+            NetworkAudit::default(),
             "sha256:placeholder-a".to_string(),
         );
 

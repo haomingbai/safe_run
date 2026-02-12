@@ -70,21 +70,21 @@
 
 ### 4.5 Stage 4：证据链与报告 networkAudit（additive）
 
-- [ ] 先写测试：从事件流聚合 `networkAudit`；并验证 `integrity.digest` 可复算。
-- [ ] 实现：`sr-evidence` 增量扩展 RunReport；`sr-cli` 报告组装补齐 networkAudit。
+- [x] 先写测试：从事件流聚合 `networkAudit`；并验证 `integrity.digest` 可复算。
+- [x] 实现：`sr-evidence` 增量扩展 RunReport；`sr-cli` 报告组装补齐 networkAudit。
 
 验收：
 
-- [ ] `cargo test -p sr-evidence -p sr-cli` 全绿。
+- [x] `cargo test -p sr-evidence -p sr-cli` 全绿。
 
-### 4.6 Stage 5（待确认后再做）：`network.rule.hit` 命中语义与采集
+### 4.6 Stage 5：`network.rule.hit` 命中语义与采集
 
-- [ ] 先在 `plan/` 定稿：`network.rule.hit` payload schema、统计口径、`networkAudit` 在 `mode=none` 时的输出策略。
-- [ ] 定稿后：补齐 runner 采样逻辑与证据/报告聚合测试。
+- [x] 先在 `plan/` 定稿：`network.rule.hit` payload schema、统计口径、`networkAudit` 在 `mode=none` 时的输出策略。
+- [x] 定稿后：补齐 runner 采样逻辑与证据/报告聚合测试。
 
 验收：
 
-- [ ] `cargo test` 全绿，且命中统计与 `networkAudit` 一致。
+- [x] `cargo test` 全绿，且命中统计与 `networkAudit` 一致。
 
 ### 4.7 Stage 6（可选）：真实可出网闭环（kernel boot args 优先）
 

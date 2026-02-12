@@ -11,8 +11,8 @@
 1. `sr-policy` 校验 allowlist。
 2. `sr-compiler` 生成 `networkPlan`。
 3. `sr-runner` 在 VM 启动前应用规则。
-4. 运行中采集规则命中事件。
-5. 退出后清理网络状态并记录结果。
+4. `sr-runner` 在生命周期采样阶段采集命中计数并写入 `network.rule.hit`（受 `evidencePlan.events` gating）。
+5. 退出后清理网络状态并记录释放/清理结果。
 
 ## 3. 安全策略
 

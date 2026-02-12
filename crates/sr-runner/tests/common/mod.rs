@@ -4,8 +4,8 @@ use serde_json::json;
 use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
     build_report, compute_artifact_hashes_from_json, compute_integrity_digest, event_time_range,
-    mount_audit_from_events, resource_usage_from_events, ArtifactJsonInputs, EvidenceEvent,
-    PolicySummary, RunReport,
+    mount_audit_from_events, network_audit_from_events, resource_usage_from_events,
+    ArtifactJsonInputs, EvidenceEvent, PolicySummary, RunReport,
 };
 use sr_policy::{
     validate_policy, Audit, Cpu, Memory, Metadata, Network, NetworkMode, PolicySpec, Resources,
@@ -120,6 +120,12 @@ pub fn build_report_from_events(
     let (started_at, finished_at) = event_time_range(events);
     let resource_usage = resource_usage_from_events(events);
     let mount_audit = mount_audit_from_events(events);
+    let network_mode = match policy.network.mode {
+        NetworkMode::None => "none",
+        NetworkMode::Allowlist => "allowlist",
+    };
+    let network_audit =
+        network_audit_from_events(events, network_mode, policy.network.egress.len());
     let mut report = build_report(
         run_id.to_string(),
         started_at,
@@ -127,12 +133,13 @@ pub fn build_report_from_events(
         monitor_result.exit_code,
         artifacts,
         PolicySummary {
-            network: "none".to_string(),
+            network: network_mode.to_string(),
             mounts: policy.mounts.len(),
         },
         resource_usage,
         events.to_vec(),
         mount_audit,
+        network_audit,
         String::new(),
     );
     report.integrity.digest = compute_integrity_digest(&report).expect("compute report digest");

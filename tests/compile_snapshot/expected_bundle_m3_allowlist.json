@@ -67,7 +67,12 @@
       "resource.sampled",
       "vm.exited",
       "run.cleaned",
-      "run.failed"
+      "run.failed",
+      "network.plan.generated",
+      "network.rule.applied",
+      "network.rule.hit",
+      "network.rule.released",
+      "network.rule.cleanup_failed"
     ]
   }
 }
