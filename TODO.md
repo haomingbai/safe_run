@@ -12,17 +12,17 @@
 
 ## 2. 全局验收标准（M3 DoD）
 
-- [ ] **测试结果**：`cargo test` 全绿（默认不运行 `#[ignore]`）。
-- [ ] **阶段边界**：不破坏 M0-M2 语义（`compile --dry-run` 约束仍成立；none 模式仍为默认拒绝）。
-- [ ] **接口兼容**：仅 additive change；任何语义变更先更新 `plan/` 再改代码。
-- [ ] **可回收**：网络规则与资源必须随 run 生命周期创建与销毁，异常退出不得残留。
+- [x] **测试结果**：`cargo test` 全绿（默认不运行 `#[ignore]`）。
+- [x] **阶段边界**：不破坏 M0-M2 语义（`compile --dry-run` 约束仍成立；none 模式仍为默认拒绝）。
+- [x] **接口兼容**：仅 additive change；任何语义变更先更新 `plan/` 再改代码。
+- [x] **可回收**：网络规则与资源必须随 run 生命周期创建与销毁，异常退出不得残留。
 
 ## 3. 测试代码标准（M3 强制）
 
-- [ ] 先写测试再写实现（每个 Stage 以“失败测试 -> 最小实现 -> 补覆盖”闭环）。
-- [ ] 默认测试不依赖 root/真实 nft/tap：系统调用通过 trait 注入（参考 mount_executor 模式）。
-- [ ] 快照与序列化必须确定性：规则排序稳定；不引入随机/时间到编译输出。
-- [ ] 断言引用常量：错误码来自 `crates/sr-common`；事件类型来自 `crates/sr-evidence`。
+- [x] 先写测试再写实现（每个 Stage 以“失败测试 -> 最小实现 -> 补覆盖”闭环）。
+- [x] 默认测试不依赖 root/真实 nft/tap：系统调用通过 trait 注入（参考 mount_executor 模式）。
+- [x] 快照与序列化必须确定性：规则排序稳定；不引入随机/时间到编译输出。
+- [x] 断言引用常量：错误码来自 `crates/sr-common`；事件类型来自 `crates/sr-evidence`。
 
 ## 4. Stage 任务清单（按顺序执行）
 
@@ -88,9 +88,11 @@
 
 ### 4.7 Stage 6（可选）：真实可出网闭环（kernel boot args 优先）
 
-- [ ] 在具备权限的 Linux 主机手工验收：TAP + nft + NAT/路由 + guest IP 配置闭环。
-- [ ] 新增 `#[ignore]` 集成测试（默认不跑），并在文档中写明环境与依赖命令。
+- [x] 在具备权限的 Linux 主机手工验收：TAP + nft + NAT/路由 + guest IP 配置闭环（采用隔离 `ip netns`，避免影响宿主机全局网络）。
+- [x] 新增 `#[ignore]` 集成测试（默认不跑），并在文档中写明环境与依赖命令。
+- [x] 当前主机能力探测与修复复验（2026-02-19）：已完成 `sudo` 授权并通过隔离 `ip netns + nft` 方案执行 `stage6_real_network_allowlist_closure`（`--ignored`）验收；同时确认无临时 nft 表/网卡/命名空间残留。
+- [x] 固化脚本与运行条件：新增 `scripts/network_allowlist_acceptance.sh`（一键执行 Stage 6 验收），运行条件与安全边界记录于 `README.md` 的“网络 allowlist 验收闭环”章节。
 
 验收：
 
-- [ ] 目标环境可复现：allowlist 目标可达、非 allowlist 目标不可达、命中可审计、异常退出后规则可回收。
+- [x] 目标环境可复现：allowlist 目标可达、非 allowlist 目标不可达、命中可审计、异常退出后规则可回收（隔离 netns 方案）。

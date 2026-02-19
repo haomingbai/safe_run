@@ -120,6 +120,75 @@ export SAFE_RUN_WORKDIR_BASE=/your/writable/path
 - M2 设计：`plan/M2/OVERVIEW.md`、`plan/M2/INTERFACES.md`、`plan/M2/MOUNT_CLARIFICATIONS.md`
 - 工程规范：`plan/ENGINEERING_CONVENTIONS.md`
 
+## 网络 allowlist 验收闭环（具备权限 Linux 主机）
+
+> 依据：`plan/M3/NETWORK_CLARIFICATIONS.md`（对应 M3 可选验收项，真实 TAP+nft+NAT/路由+guest IP 配置闭环在具备权限环境执行）。
+
+### 环境与依赖命令
+
+- Linux 主机（仅 Linux）
+- Root 权限（`id -u` 为 `0`）或可用 `sudo`
+- Linux 网络工具：`ip`、`nft`、`sysctl`
+- 验收命令依赖：`curl`、`cargo`
+- Safe-Run 运行所需：`firecracker`、`jailer`（推荐 `./scripts/get_firecracker.sh` 后 `export PATH="$(pwd)/artifacts/bin:$PATH"`）
+
+建议先确认：
+
+```bash
+id -u
+command -v ip nft sysctl firecracker jailer
+```
+
+### 一键验收脚本（推荐）
+
+已提供脚本：`scripts/network_allowlist_acceptance.sh`
+
+执行：
+
+```bash
+./scripts/network_allowlist_acceptance.sh
+```
+
+脚本行为：
+
+1. 在隔离 `ip netns` 中构建网络 allowlist 验收拓扑（TAP + bridge + veth + NAT/route + guest IP）；
+2. 在命名空间内下发 `nft` allowlist 规则，避免修改宿主机全局 `output` 链；
+3. 注入环境变量并运行 `#[ignore]` 用例：`stage6_real_network_allowlist_closure`；
+4. 自动清理临时命名空间/网卡/`nft` 表（含 NAT 表）。
+
+### `#[ignore]` 集成测试（默认不跑）
+
+已新增：`crates/sr-runner/tests/network_stage6_real_world.rs`
+
+该测试通过环境变量注入“手工验收命令”，用于验证以下闭环：
+
+1. allowlist 目标可达；
+2. 非 allowlist 目标不可达；
+3. 命中可审计；
+4. 异常或结束后规则可回收。
+
+必须设置的环境变量：
+
+- `SAFE_RUN_STAGE6_SETUP_CMD`：准备并启动测试场景（TAP+nft+NAT/路由+guest IP 配置）
+- `SAFE_RUN_STAGE6_ALLOWED_PROBE_CMD`：allowlist 目标探测（应成功）
+- `SAFE_RUN_STAGE6_BLOCKED_PROBE_CMD`：非 allowlist 目标探测（应失败）
+- `SAFE_RUN_STAGE6_AUDIT_PROBE_CMD`：命中审计探测（应成功）
+- `SAFE_RUN_STAGE6_CLEANUP_PROBE_CMD`：清理结果探测（应成功，确认无残留）
+
+可选环境变量：
+
+- `SAFE_RUN_STAGE6_CLEANUP_CMD`：测试结束后统一清理命令（`Drop` 钩子执行）
+
+执行命令：
+
+```bash
+cargo test -p sr-runner stage6_real_network_allowlist_closure -- --ignored --nocapture
+```
+
+> 注意：该测试不会替你生成具体网络拓扑；它执行你提供的命令并断言结果，适配不同 Linux 主机网络环境。
+
+当前仓库默认推荐直接使用 `scripts/network_allowlist_acceptance.sh`，它已固化可复现拓扑与清理逻辑。
+
 ## 验收与错误码
 
 - 验收清单：`M1_CHECKLIST.md`
