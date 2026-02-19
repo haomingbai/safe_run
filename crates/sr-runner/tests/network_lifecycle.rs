@@ -61,6 +61,10 @@ impl NetworkLifecycle for RecordingNetworkLifecycle {
                     protocol: rule.protocol.clone(),
                     target,
                     port: rule.port,
+                    allow_comment: format!("mock:allow:{chain}:{}", rule.port),
+                    allow_handle: None,
+                    block_comment: format!("mock:block:{chain}:{}", rule.port),
+                    block_handle: None,
                 });
             }
         }
@@ -70,6 +74,10 @@ impl NetworkLifecycle for RecordingNetworkLifecycle {
             table: plan.nft.table.clone(),
             chains: plan.nft.chains.clone(),
             rules,
+            default_drop_rules: vec![],
+            created_tap: true,
+            created_table: true,
+            created_chains: plan.nft.chains.clone(),
         })
     }
 
@@ -376,6 +384,11 @@ fn network_rule_hit_events_are_emitted_and_aggregated() {
         .expect("cleanup should succeed");
 
     let events = parse_event_stream(&prepared.event_log_path());
+    let plan_event = events
+        .iter()
+        .find(|event| event.event_type == EVENT_NETWORK_PLAN_GENERATED)
+        .expect("network.plan.generated should exist");
+    assert_eq!(plan_event.payload["mode"], "allowlist");
     let hit_events = events
         .iter()
         .filter(|event| event.event_type == EVENT_NETWORK_RULE_HIT)

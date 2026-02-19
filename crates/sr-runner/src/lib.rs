@@ -16,7 +16,8 @@ pub use model::{
     RunnerControlRequest, RunnerControlResponse, RunnerRuntime, RuntimeContext,
 };
 pub use network_lifecycle::{
-    AppliedNetwork, AppliedNetworkRule, NetworkLifecycle, NetworkLifecycleError, NetworkRuleHit,
+    AppliedNetwork, AppliedNetworkRule, HostResolver, NetworkCommandExecutor, NetworkLifecycle,
+    NetworkLifecycleError, NetworkRuleHit, SystemHostResolver, SystemNetworkCommandExecutor,
     SystemNetworkLifecycle,
 };
 pub use runner::Runner;

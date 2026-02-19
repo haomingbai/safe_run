@@ -43,7 +43,7 @@ impl Runner {
         Self {
             runtime: RunnerRuntime::default(),
             mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
-            network_lifecycle: Box::new(SystemNetworkLifecycle),
+            network_lifecycle: Box::new(SystemNetworkLifecycle::default()),
         }
     }
 
@@ -52,7 +52,7 @@ impl Runner {
         Self {
             runtime,
             mount_executor: MountExecutor::new(SystemMountApplier, SystemMountRollbacker),
-            network_lifecycle: Box::new(SystemNetworkLifecycle),
+            network_lifecycle: Box::new(SystemNetworkLifecycle::default()),
         }
     }
 
@@ -61,7 +61,7 @@ impl Runner {
         Self {
             runtime,
             mount_executor,
-            network_lifecycle: Box::new(SystemNetworkLifecycle),
+            network_lifecycle: Box::new(SystemNetworkLifecycle::default()),
         }
     }
 
@@ -327,6 +327,7 @@ impl Runner {
             STAGE_LAUNCH,
             EVENT_NETWORK_PLAN_GENERATED,
             json!({
+                "mode": "allowlist",
                 "tap": network_plan.tap.name,
                 "table": network_plan.nft.table,
                 "chains": network_plan.nft.chains,

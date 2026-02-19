@@ -62,8 +62,8 @@ BR=s6br0
 TAP=s6tap0
 VETH_HOST=s6vethh
 VETH_NS=s6vethn
-TABLE=s6testns
-CHAIN=output
+PROBE_TABLE=s6probe
+PROBE_CHAIN=output
 PORT=18080
 BR_IP=198.18.0.1
 NS_IP=198.18.0.2
@@ -99,10 +99,10 @@ python3 -m http.server "$PORT" --bind "$BR_IP" >/tmp/safe-run-stage6/http.log 2>
 echo $! > "$PID_FILE"
 sleep 0.5
 
-"$SUDO_CMD" ip netns exec "$NS" nft delete table inet "$TABLE" >/dev/null 2>&1 || true
-"$SUDO_CMD" ip netns exec "$NS" nft add table inet "$TABLE"
-"$SUDO_CMD" ip netns exec "$NS" nft "add chain inet $TABLE $CHAIN { type filter hook output priority 0; policy drop; }"
-"$SUDO_CMD" ip netns exec "$NS" nft add rule inet "$TABLE" "$CHAIN" ip daddr "$BR_IP" tcp dport "$PORT" counter accept
+"$SUDO_CMD" ip netns exec "$NS" nft delete table inet "$PROBE_TABLE" >/dev/null 2>&1 || true
+"$SUDO_CMD" ip netns exec "$NS" nft add table inet "$PROBE_TABLE"
+"$SUDO_CMD" ip netns exec "$NS" nft "add chain inet $PROBE_TABLE $PROBE_CHAIN { type filter hook output priority 0; policy drop; }"
+"$SUDO_CMD" ip netns exec "$NS" nft add rule inet "$PROBE_TABLE" "$PROBE_CHAIN" ip daddr "$BR_IP" tcp dport "$PORT" counter accept
 EOF
 
 cat > "$TMP_DIR/allowed_probe.sh" <<'EOF'
@@ -123,7 +123,7 @@ cat > "$TMP_DIR/audit_probe.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 SUDO_CMD="${SUDO_CMD:-sudo}"
-"$SUDO_CMD" ip netns exec s6ns nft list chain inet s6testns output | grep -E "packets [1-9]"
+"$SUDO_CMD" nft list chain inet safe_run forward | grep -E "packets [1-9]"
 EOF
 
 cat > "$TMP_DIR/cleanup_probe.sh" <<'EOF'
@@ -143,6 +143,7 @@ fi
 "$SUDO_CMD" ip link del "$BR" >/dev/null 2>&1 || true
 "$SUDO_CMD" ip link del "$TAP" >/dev/null 2>&1 || true
 "$SUDO_CMD" ip link del "$VETH_HOST" >/dev/null 2>&1 || true
+"$SUDO_CMD" ip netns exec "$NS" nft delete table inet s6probe >/dev/null 2>&1 || true
 "$SUDO_CMD" nft delete table ip s6nat >/dev/null 2>&1 || true
 ! "$SUDO_CMD" ip netns list | grep -q "^${NS}\\b"
 ! ip link show "$BR" >/dev/null 2>&1
@@ -168,6 +169,7 @@ fi
 "$SUDO_CMD" ip link del "$BR" >/dev/null 2>&1 || true
 "$SUDO_CMD" ip link del "$TAP" >/dev/null 2>&1 || true
 "$SUDO_CMD" ip link del "$VETH_HOST" >/dev/null 2>&1 || true
+"$SUDO_CMD" ip netns exec "$NS" nft delete table inet s6probe >/dev/null 2>&1 || true
 "$SUDO_CMD" nft delete table ip s6nat >/dev/null 2>&1 || true
 EOF
 
@@ -180,6 +182,8 @@ export SAFE_RUN_STAGE6_BLOCKED_PROBE_CMD="$TMP_DIR/blocked_probe.sh"
 export SAFE_RUN_STAGE6_AUDIT_PROBE_CMD="$TMP_DIR/audit_probe.sh"
 export SAFE_RUN_STAGE6_CLEANUP_PROBE_CMD="$TMP_DIR/cleanup_probe.sh"
 export SAFE_RUN_STAGE6_CLEANUP_CMD="$TMP_DIR/cleanup.sh"
+export SAFE_RUN_STAGE6_ALLOWED_CIDR="${SAFE_RUN_STAGE6_ALLOWED_CIDR:-198.18.0.1/32}"
+export SAFE_RUN_STAGE6_ALLOWED_PORT="${SAFE_RUN_STAGE6_ALLOWED_PORT:-18080}"
 
 cd "$ROOT_DIR"
 echo "INFO: running network allowlist ignored acceptance test..."

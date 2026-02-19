@@ -152,9 +152,10 @@ command -v ip nft sysctl firecracker jailer
 脚本行为：
 
 1. 在隔离 `ip netns` 中构建网络 allowlist 验收拓扑（TAP + bridge + veth + NAT/route + guest IP）；
-2. 在命名空间内下发 `nft` allowlist 规则，避免修改宿主机全局 `output` 链；
-3. 注入环境变量并运行 `#[ignore]` 用例：`stage6_real_network_allowlist_closure`；
-4. 自动清理临时命名空间/网卡/`nft` 表（含 NAT 表）。
+2. 在 netns 内下发 probe 专用 `output` 过滤规则（仅用于稳定复现“允许/阻断”探针，不替代 runner 规则验收）；
+3. 注入环境变量并运行 `#[ignore]` 用例：`stage6_real_network_allowlist_closure`（由 runner 在宿主机 `safe_run/forward` 下发规则）；
+4. 使用审计探针校验 `safe_run/forward` 命中计数；
+5. 自动清理临时命名空间/网卡/`nft` 表（含 NAT 表）。
 
 ### `#[ignore]` 集成测试（默认不跑）
 
