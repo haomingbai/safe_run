@@ -123,6 +123,8 @@ pub fn build_report(
         events,
         mount_audit,
         network_audit,
+        archive: None,
+        verification: None,
         integrity: Integrity {
             digest: integrity_digest,
         },

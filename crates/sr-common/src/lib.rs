@@ -46,3 +46,7 @@ pub const SR_RUN_201: &str = "SR-RUN-201";
 pub const SR_RUN_202: &str = "SR-RUN-202";
 pub const SR_EVD_001: &str = "SR-EVD-001";
 pub const SR_EVD_002: &str = "SR-EVD-002";
+pub const SR_EVD_301: &str = "SR-EVD-301";
+pub const SR_EVD_302: &str = "SR-EVD-302";
+pub const SR_EVD_303: &str = "SR-EVD-303";
+pub const SR_OPS_301: &str = "SR-OPS-301";

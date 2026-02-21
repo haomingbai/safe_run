@@ -4,7 +4,7 @@ use sr_compiler::{compile_dry_run, CompileBundle};
 use sr_evidence::{
     build_report, compute_artifact_hashes_from_json, compute_integrity_digest, event_time_range,
     mount_audit_from_events, network_audit_from_events, resource_usage_from_events,
-    ArtifactJsonInputs, EvidenceEvent, PolicySummary, RunReport,
+    verify_report_file, ArtifactJsonInputs, EvidenceEvent, PolicySummary, RunReport,
 };
 use sr_policy::{load_policy_from_path, validate_policy_with_allowlist, NetworkMode, PolicySpec};
 use sr_runner::{MonitorResult, RunState, Runner, RunnerControlRequest, RuntimeContext};
@@ -42,6 +42,15 @@ enum Commands {
         #[arg(long = "mount-allowlist")]
         mount_allowlist: Option<String>,
     },
+    Report {
+        #[command(subcommand)]
+        command: ReportCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ReportCommands {
+    Verify { report: String },
 }
 
 fn main() -> ExitCode {
@@ -61,6 +70,30 @@ fn main() -> ExitCode {
             policy,
             mount_allowlist,
         } => run_cmd(&policy, mount_allowlist.as_deref()),
+        Commands::Report { command } => match command {
+            ReportCommands::Verify { report } => verify_report_cmd(&report),
+        },
+    }
+}
+
+fn verify_report_cmd(report_path: &str) -> ExitCode {
+    match verify_report_file(Path::new(report_path)) {
+        Ok(result) => {
+            print_json_value(&serde_json::to_value(&result).expect("convert verify result"));
+            if result.valid {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(2)
+            }
+        }
+        Err(err) => {
+            print_json_value(&serde_json::json!({
+                "valid": false,
+                "checks": [],
+                "errors": [err]
+            }));
+            ExitCode::from(2)
+        }
     }
 }
 
@@ -553,7 +586,11 @@ fn print_error_result(err: &ErrorItem) {
 mod tests {
     use super::*;
     use sr_compiler::compile_dry_run;
-    use sr_evidence::{EVENT_NETWORK_RULE_HIT, STAGE_CLEANUP};
+    use sr_evidence::{
+        compute_integrity_digest, derive_event_hash, EvidenceEvent, Integrity, MountAudit,
+        NetworkAudit, PolicySummary, ReportArtifacts, ResourceUsage, RunReport,
+        EVENT_NETWORK_RULE_HIT, RUN_REPORT_SCHEMA_VERSION, STAGE_CLEANUP, STAGE_PREPARE,
+    };
     use sr_policy::{
         Audit, Cpu, Memory, Metadata, Network, NetworkEgressRule, NetworkMode, Resources, Runtime,
     };
@@ -814,6 +851,34 @@ mod tests {
         assert!(err.is_none());
     }
 
+    #[test]
+    fn report_verify_cmd_returns_success_for_valid_report() {
+        let report = valid_report_for_verify();
+        let report_path = temp_report_path("verify-ok");
+        let content = serde_json::to_string_pretty(&report).expect("serialize report");
+        fs::write(&report_path, content).expect("write report");
+
+        let code = verify_report_cmd(report_path.to_string_lossy().as_ref());
+        assert_eq!(code, ExitCode::SUCCESS);
+
+        let _ = fs::remove_file(&report_path);
+    }
+
+    #[test]
+    fn report_verify_cmd_returns_error_for_broken_event_chain() {
+        let mut report = valid_report_for_verify();
+        report.events[0].hash_prev =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        let report_path = temp_report_path("verify-fail");
+        let content = serde_json::to_string_pretty(&report).expect("serialize report");
+        fs::write(&report_path, content).expect("write report");
+
+        let code = verify_report_cmd(report_path.to_string_lossy().as_ref());
+        assert_eq!(code, ExitCode::from(2));
+
+        let _ = fs::remove_file(&report_path);
+    }
+
     fn sample_policy() -> PolicySpec {
         PolicySpec {
             api_version: "policy.safe-run.dev/v1alpha1".to_string(),
@@ -871,5 +936,70 @@ mod tests {
             .subsec_nanos();
         path.push(format!("safe-run-cli-{label}-{id}.yaml"));
         path
+    }
+
+    fn temp_report_path(label: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        path.push(format!("safe-run-report-verify-{label}-{id}.json"));
+        path
+    }
+
+    fn valid_report_for_verify() -> RunReport {
+        let mut event = EvidenceEvent {
+            timestamp: "2026-02-21T10:00:00Z".to_string(),
+            run_id: "sr-cli-verify-test".to_string(),
+            stage: STAGE_PREPARE.to_string(),
+            event_type: "run.prepared".to_string(),
+            payload: serde_json::json!({"workdir": "/tmp/safe-run/test"}),
+            hash_prev:
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            hash_self: String::new(),
+        };
+        event.hash_self = derive_event_hash(&event);
+
+        let mut report = RunReport {
+            schema_version: RUN_REPORT_SCHEMA_VERSION.to_string(),
+            run_id: "sr-cli-verify-test".to_string(),
+            started_at: "2026-02-21T10:00:00Z".to_string(),
+            finished_at: "2026-02-21T10:00:01Z".to_string(),
+            exit_code: 0,
+            artifacts: ReportArtifacts {
+                kernel_hash:
+                    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                        .to_string(),
+                rootfs_hash:
+                    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                        .to_string(),
+                policy_hash:
+                    "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+                        .to_string(),
+                command_hash:
+                    "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+                        .to_string(),
+            },
+            policy_summary: PolicySummary {
+                network: "none".to_string(),
+                mounts: 0,
+            },
+            resource_usage: ResourceUsage {
+                cpu: "cpuUsageUsec=0".to_string(),
+                memory: "memoryCurrentBytes=0".to_string(),
+            },
+            events: vec![event],
+            mount_audit: MountAudit::default(),
+            network_audit: NetworkAudit::default(),
+            archive: None,
+            verification: None,
+            integrity: Integrity {
+                digest: String::new(),
+            },
+        };
+        report.integrity.digest = compute_integrity_digest(&report).expect("compute digest");
+        report
     }
 }

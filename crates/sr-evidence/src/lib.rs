@@ -1,19 +1,27 @@
+mod archiver;
 mod event_writer;
 mod hashing;
+mod index;
 mod report_builder;
+mod verifier;
 
 use serde::{Deserialize, Serialize};
 
+pub use archiver::{archive_report, load_archived_report};
 pub use event_writer::append_event;
 pub use hashing::{
     derive_event_hash, normalize_json_string, sha256_bytes, sha256_file, sha256_json_value,
     sha256_string,
+};
+pub use index::{
+    append_archive_index, load_archive_index, ArchiveIndex, ArchiveIndexEntry,
 };
 pub use report_builder::{
     build_report, compute_artifact_hashes, compute_artifact_hashes_from_json,
     compute_integrity_digest, event_time_range, mount_audit_from_events, network_audit_from_events,
     resource_usage_from_events, ArtifactInputs, ArtifactJsonInputs,
 };
+pub use verifier::{verify_report, verify_report_file, VerifyCheck, VerifyResult};
 
 pub const RUN_REPORT_SCHEMA_VERSION: &str = "safe-run.report/v1";
 pub const STAGE_COMPILE: &str = "compile";
@@ -87,7 +95,28 @@ pub struct RunReport {
     pub mount_audit: MountAudit,
     #[serde(rename = "networkAudit", default)]
     pub network_audit: NetworkAudit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<ArchiveMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationMetadata>,
     pub integrity: Integrity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchiveMetadata {
+    #[serde(rename = "bundleId")]
+    pub bundle_id: String,
+    #[serde(rename = "storedAt")]
+    pub stored_at: String,
+    pub retention: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationMetadata {
+    pub algorithm: String,
+    #[serde(rename = "verifiedAt")]
+    pub verified_at: String,
+    pub result: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -369,6 +398,8 @@ mod tests {
             }],
             mount_audit: MountAudit::default(),
             network_audit: NetworkAudit::default(),
+            archive: None,
+            verification: None,
             integrity: Integrity {
                 digest: "sha256:report".to_string(),
             },
